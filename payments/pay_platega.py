@@ -110,7 +110,7 @@ async def pay(val: str, des: str, user_id: str, duration: str, white: bool, paym
 
         # Асинхронная запись платежа
         if payment_method == 2:
-            await sql.add_platega_payment(int(user_id), int(val), result['status'], result['id'], is_gift=False)
+            await sql.add_platega_payment(int(user_id), int(val), result['status'], result['id'], payload, is_gift=False)
         else:
             await sql.add_platega_card_payment(int(user_id), int(val), result['status'], result['id'], payload, is_gift=False)
 
@@ -145,7 +145,7 @@ async def pay_for_gift(val: str, des: str, user_id: str, duration: str, white: b
 
         # Асинхронная запись платежа с флагом подарка
         if payment_method == 2:
-            await sql.add_platega_payment(int(user_id), int(val), result['status'], result['id'], is_gift=True)
+            await sql.add_platega_payment(int(user_id), int(val), result['status'], result['id'], payload, is_gift=True)
         else:
             await sql.add_platega_card_payment(int(user_id), int(val), result['status'], result['id'], payload, is_gift=True)
 
