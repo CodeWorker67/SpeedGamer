@@ -247,6 +247,17 @@ class AsyncSQL:
             result = await session.execute(stmt)
             return [row[0] for row in result.all()]
 
+    async def select_subscribed_not_in_chanel(self):
+        async with self.session_factory() as session:
+            # Подзапрос: все пользователи с успешными платежами
+            stmt = select(Users.user_id).where(
+                Users.in_panel == True,
+                Users.subscription_end_date == None,
+                Users.is_delete == False
+            )
+            result = await session.execute(stmt)
+            return [row[0] for row in result.all()]
+
     async def select_user_by_parameter(self, parameter: str, value: str) -> List[int]:
         """
         Возвращает список user_id, у которых значение указанного параметра равно value.
