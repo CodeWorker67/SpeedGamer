@@ -70,7 +70,8 @@ def keyboard_start():
 
 def keyboard_tariff_bonus():
     return create_kb(1,
-                     r_30='🤝 30 дней - 99 руб',
+                     r_7='🤌 7 дней - 99 руб',
+                     r_30='🤝 30 дней - 139 руб',
                      r_90='👌 90 дней - 269 руб',
                      r_180='💪 180 дней - 499 руб',
                      free_vpn='🔥ПОПРОБОВАТЬ 5 дней БЕСПЛАТНО🔥',
@@ -80,16 +81,25 @@ def keyboard_tariff_bonus():
 
 def keyboard_tariff():
     return create_kb(1,
-                     r_30='🤝 30 дней - 99 руб',
+                     r_7='🤌 7 дней - 99 руб',
+                     r_30='🤝 30 дней - 139 руб',
                      r_90='👌 90 дней - 269 руб',
                      r_180='💪 180 дней - 499 руб',
                      back_to_main='🔙 Назад'
                      )
 
 
+def keyboard_tariff_old():
+    return create_kb(1,
+                     r_30old='🤝 30 дней - 99 руб',
+                     back_to_main='🔙 Назад'
+                     )
+
+
 def keyboard_gift_tariff():
     return create_kb(1,
-                     gift_r_30='🤝 30 дней - 99 руб',
+                     r_7='🤌 7 дней - 99 руб',
+                     r_30='🤝 30 дней - 139 руб',
                      gift_r_90='👌 90 дней - 269 руб',
                      gift_r_180='💪 180 дней - 499 руб',
                      back_to_main='🔙 Назад'

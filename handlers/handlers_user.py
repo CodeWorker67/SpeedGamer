@@ -5,7 +5,7 @@ from bot import sql, x3
 from config import CHANEL_ID, ADMIN_IDS
 from keyboard import (keyboard_start, keyboard_start_bonus, keyboard_tariff_bonus, keyboard_tariff,
                       keyboard_subscription, ref_keyboard, keyboard_gift_tariff, keyboard_payment_method,
-                      keyboard_payment_method_stock, chanel_keyboard)
+                      keyboard_payment_method_stock, chanel_keyboard, keyboard_tariff_old)
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
@@ -161,7 +161,12 @@ async def direct_connect_vpn_cb(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({'r_30', 'r_90', 'r_180', 'r_white_30'}))
+@router.message(F.text.in_({'old', 'Old', 'OLD'}))
+async def old_prices(message: Message):
+    await message.answer('🔥Приобретайте подписку по старой цене!', reply_markup=keyboard_tariff_old())
+
+
+@router.callback_query(F.data.in_({'r_7', 'r_30', 'r_90', 'r_180', 'r_white_30', 'r_30old'}))
 async def process_payment_method(callback: CallbackQuery):
     await callback.answer()
     if 'white' in callback.data:

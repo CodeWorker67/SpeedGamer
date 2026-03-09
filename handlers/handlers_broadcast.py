@@ -147,7 +147,7 @@ async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext, bot
     # Получаем пользователей по выбранному параметру
     if selected_parameter == "all_users":
         user_ids = await sql.select_all_users()  # Получаем всех пользователей
-        keyboard_broadcast = create_kb(1, buy_gift='🎁 Подарить подписку', r_120='🔥 Акция: 120 дней - 269 руб')
+        keyboard_broadcast = create_kb(1, r_30old='🔥 30 дней - 99 руб (для своих)')
     elif selected_parameter == 'not_connected_subscribe_yes':
         user_ids = await sql.select_not_connected_subscribe_yes()
         keyboard_broadcast = create_kb(1, connect_vpn='🔗 Подключить SpeedGamer')
