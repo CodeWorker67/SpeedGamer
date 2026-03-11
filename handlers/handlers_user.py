@@ -1,15 +1,16 @@
 import time
 import requests
 
-from bot import sql, x3
-from config import CHANEL_ID, ADMIN_IDS
+from bot import sql, x3, bot
+from config import CHANEL_ID, ADMIN_IDS, BOT_URL
 from keyboard import (keyboard_start, keyboard_start_bonus, keyboard_tariff_bonus, keyboard_tariff,
                       keyboard_subscription, ref_keyboard, keyboard_gift_tariff, keyboard_payment_method,
-                      keyboard_payment_method_stock, chanel_keyboard, keyboard_tariff_old)
+                      keyboard_payment_method_stock, chanel_keyboard, keyboard_tariff_old, keyboard_inline_ref)
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, ChatMemberUpdated
+from aiogram.types import Message, CallbackQuery, ChatMemberUpdated, InlineQuery, InlineQueryResultArticle, \
+    InputTextMessageContent
 from aiogram.filters import ChatMemberUpdatedFilter, KICKED, MEMBER, Command
 from lexicon import lexicon
 
@@ -373,3 +374,38 @@ async def handle_chat_member_update(update: ChatMemberUpdated):
     elif update.old_chat_member.status != "left" and update.new_chat_member.status == "left":
         await sql.update_in_chanel(user_id, False)
         logger.warning(f"User {user_id} left chanel")
+
+
+@router.inline_query(lambda query: query.query == 'partner')
+async def inline_partner(inline_query: InlineQuery):
+    user_id = inline_query.from_user.id
+
+    text = f'''
+Привет. Подключись к Ускорителю игр по моей ссылке:
+
+{BOT_URL}?start=ref{user_id}
+
+💥 Низкий пинг в Roblox, Brawl Stars, Clash Royale
+💫 YouTube без рекламы и лимитов
+👌🏻 Стабильное соединение даже в часы пик
+    '''
+
+    result = InlineQueryResultArticle(
+        id="1",
+        title='🤝🤝🤝 Приглашение',
+        description="Друг, перешедший по этой кнопке станет Вашим рефералом.",
+        input_message_content=InputTextMessageContent(
+            message_text=text,
+            parse_mode='HTML',
+            disable_web_page_preview=False
+        ),
+        reply_markup=keyboard_inline_ref(user_id),
+        thumb_url="https://img.freepik.com/premium-photo/glowing-blue-neon-wifi-signal-icon-dark-background_989822-6238.jpg?semt=ais_hybrid"  # опционально: иконка
+    )
+
+    # Отправляем результат обратно в Telegram
+    await bot.answer_inline_query(
+        inline_query.id,
+        results=[result],
+        cache_time=0
+    )

@@ -175,9 +175,18 @@ def ref_keyboard(user_id):
         [
             InlineKeyboardButton(
                 text="Пригласить друзей🫶",
-                url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка для тебя на Игровой ускоритель!')}"
+                switch_inline_query="partner"
             )
         ],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
     return keyboard
+
+
+def keyboard_inline_ref(user_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🔗 Подключить Ускоритель игр",
+            url=f"{BOT_URL}?start=ref{user_id}")]
+    ]
+    )
