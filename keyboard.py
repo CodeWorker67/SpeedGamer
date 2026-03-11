@@ -141,7 +141,7 @@ def keyboard_payment_method(tarif):
         [InlineKeyboardButton(text="💎 Криптовалюта", callback_data=f"crypto_{tarif}")],
         # [InlineKeyboardButton(text="💎 TON", callback_data=f"crypto_ton_{tarif}")],
         # [InlineKeyboardButton(text="💵 USDT", callback_data=f"crypto_usdt_{tarif}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data='back_to_buy_menu')],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data='back_to_main')],
     ])
     return keyboard
 
