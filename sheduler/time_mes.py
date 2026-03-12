@@ -3,7 +3,7 @@ from datetime import datetime
 from aiogram import Bot
 
 from bot import sql
-from keyboard import keyboard_tariff
+from keyboard import keyboard_tariff, keyboard_tariff_trial
 from lexicon import lexicon
 from logging_config import logger
 
@@ -21,28 +21,34 @@ async def send_message_cron(bot: Bot):
         try:
             # Если метод get_subscription_end_date не асинхронный, убираем await
             end_date = await sql.get_subscription_end_date(user_id)
+            user_data = await sql.get_user(user_id)
+            is_pay_flag = user_data[8]
             if end_date:
                 if isinstance(end_date, datetime):
                     end_date = end_date.date()  # Приводим к типу date, если это datetime
                 today = datetime.now().date()  # Приводим текущую дату и время к типу date
                 days_left = (end_date - today).days
+                if is_pay_flag:
+                    keyboard = keyboard_tariff()
+                else:
+                    keyboard = keyboard_tariff_trial()
                 if days_left == 7 and not await sql.notification_sent_today(user_id):
-                    await bot.send_message(chat_id=user_id, text=lexicon['push_7'], reply_markup=keyboard_tariff())
+                    await bot.send_message(chat_id=user_id, text=lexicon['push_7'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_7 += 1
                 elif days_left == 3 and not await sql.notification_sent_today(user_id):
-                    await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard_tariff())
+                    await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_3 += 1
                 elif days_left == 1 and not await sql.notification_sent_today(user_id):
-                    await bot.send_message(chat_id=user_id, text=lexicon['push_1'], reply_markup=keyboard_tariff())
+                    await bot.send_message(chat_id=user_id, text=lexicon['push_1'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_1 += 1
                 elif days_left == 0 and not await sql.notification_sent_today(user_id):
-                    await bot.send_message(chat_id=user_id, text=lexicon['push_0'], reply_markup=keyboard_tariff())
+                    await bot.send_message(chat_id=user_id, text=lexicon['push_0'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_0 += 1
@@ -53,7 +59,7 @@ async def send_message_cron(bot: Bot):
                             last_notification_date = last_notification_date.date()  # Приводим к типу date
                     # Проверяем, прошло ли 3 дней с момента последнего уведомления
                     if not last_notification_date or (today - last_notification_date).days >= 3:
-                        await bot.send_message(chat_id=user_id, text=lexicon['push_off'], reply_markup=keyboard_tariff())
+                        await bot.send_message(chat_id=user_id, text=lexicon['push_off'], reply_markup=keyboard)
                         await asyncio.sleep(0.05)
                         await sql.mark_notification_as_sent(user_id)
                         sent_count_week += 1

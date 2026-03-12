@@ -157,6 +157,7 @@ async def process_confirmed_payment(payload):
                 await sql.update_in_panel(user_id)
             else:
                 await sql.add_user(user_id, True)
+            await sql.update_reserve_field(user_id)
 
             # Отправляем уведомление пользователю
             try:

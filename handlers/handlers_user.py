@@ -5,7 +5,8 @@ from bot import sql, x3, bot
 from config import CHANEL_ID, ADMIN_IDS, BOT_URL
 from keyboard import (keyboard_start, keyboard_start_bonus, keyboard_tariff_bonus, keyboard_tariff,
                       keyboard_subscription, ref_keyboard, keyboard_gift_tariff, keyboard_payment_method,
-                      keyboard_payment_method_stock, chanel_keyboard, keyboard_tariff_old, keyboard_inline_ref)
+                      keyboard_payment_method_stock, chanel_keyboard, keyboard_tariff_old, keyboard_inline_ref,
+                      create_kb)
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
@@ -359,8 +360,13 @@ async def user_unblocked_bot(event: ChatMemberUpdated):
 
 @router.callback_query(F.data == 'r_120')
 async def process_payment_method_bonus(callback: CallbackQuery):
+    user_data = await sql.get_user(callback.from_user.id)
+    if user_data[8]:
+        await callback.message.answer('Акция действительна только при первой оплате.',
+                                      reply_markup=create_kb(1, back_to_main='🔙 Назад'))
     tariff = callback.data
-    await callback.message.answer('Выберите метод оплаты акционной подписки:', reply_markup=keyboard_payment_method_stock(tariff))
+    await callback.message.answer('Выберите метод оплаты акционной подписки:',
+                                  reply_markup=keyboard_payment_method_stock(tariff))
 
 
 @router.chat_member()

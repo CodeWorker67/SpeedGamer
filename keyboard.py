@@ -91,6 +91,18 @@ def keyboard_tariff():
                      )
 
 
+def keyboard_tariff_trial():
+    return create_kb(1,
+                     r_7='🤌 7 дней - 99 руб',
+                     r_30='🤝 30 дней - 139 руб',
+                     r_90='👌 90 дней - 269 руб',
+                     r_120='🔥 Акция: 120 дней - 269 руб',
+                     r_180='💪 180 дней - 499 руб',
+                     r_white_30='🦾 Включи мобильный интернет - 299 руб',
+                     back_to_main='🔙 Назад'
+                     )
+
+
 def keyboard_tariff_old():
     return create_kb(1,
                      r_30old='🤝 30 дней - 99 руб',
