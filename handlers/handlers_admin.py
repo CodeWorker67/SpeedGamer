@@ -271,21 +271,6 @@ async def check_online(message: Message):
     await message.answer(f"{len(users_x3)} - всего юзеров в панели\n{success_count + fail_count} - подключенных\n{success_count} - обновлено\n{fail_count} - ошибка")
 
 
-@router.message(Command(commands=['check_connect']))
-async def force_check_connect_command(message: Message):
-    """Принудительная проверка подключённых пользователей и обновление Is_tarif в БД"""
-    if message.from_user.id not in ADMIN_IDS:
-        return
-
-    await message.answer("🔄 Запускаю проверку подключений всех пользователей...")
-    try:
-        await check_connect()  # функция уже содержит логику обновления is_connect
-        await message.answer("✅ Проверка завершена. Подробности в логах.")
-    except Exception as e:
-        logger.error(f"Ошибка при выполнении force_check_connect: {e}")
-        await message.answer(f"❌ Произошла ошибка: {e}")
-
-
 @router.message(Command(commands=['sync_panel']))
 async def sync_panel(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -357,28 +342,6 @@ async def sync_panel(message: Message):
     )
     await message.answer(report)
     logger.info(report)
-
-
-@router.message(Command(commands=['check_cascade']))
-async def check_cascade(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    users = await x3.get_all_users()
-    cnt = 0
-    for user in users:
-        try:
-            username = user.get('username', [])
-            if username.isdigit():
-                squad_1 = ['494bf6ce-d62b-4929-a980-dfc14b8b5ddb']
-                squad_2 = ['2e6f13b9-58a0-4f46-bd76-0d294f00ef18']
-                uuid = user.get('uuid')
-                squad_new = random.choice([squad_1, squad_2])
-                await x3.update_user_squads(uuid, squad_new)
-                cnt += 1
-                await asyncio.sleep(0.05)
-                print(cnt)
-        except:
-            print('ALLLLLLLLLLLLLLLLLLAAAAAAAARM')
 
 
 @router.message(Command(commands=['check_users']))
@@ -459,14 +422,14 @@ async def check_users_command(message: Message):
             db_naive = db_expire.replace(tzinfo=None)
             diff_hours = abs((panel_naive - db_naive).total_seconds()) / 3600
 
-            if diff_hours >= 4:
+            if diff_hours >= 6:
                 mismatched.append((user_id, db_naive, panel_naive))
 
         # 5. Формируем отчёт
         report_lines = []
         report_lines.append(f"📊 Результаты проверки:\n")
         report_lines.append(f"👥 Всего проверено: {total}")
-        report_lines.append(f"❌ Расхождений в датах (>=3ч): {len(mismatched)}")
+        report_lines.append(f"❌ Расхождений в датах (>=6ч): {len(mismatched)}")
         report_lines.append(f"🔍 Не найдены в панели: {len(not_found_in_panel)}")
 
         # Если есть расхождения и их количество не превышает лимит для прямого вывода

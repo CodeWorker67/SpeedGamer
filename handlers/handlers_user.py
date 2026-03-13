@@ -326,6 +326,13 @@ async def activate_gift(message: Message, gift_id: str):
         return False
 
 
+@router.callback_query(F.data == 'video_faq')
+async def video_faq(callback: CallbackQuery):
+    await callback.message.answer_video(video='BAACAgIAAxkBAAECpqNpqrDnzrb_G1rcEtZli39lGgVpMAACa5sAAl9MWUmxYN_rJYzPVToE',
+                                        caption=lexicon['push_not_subscribed_3h'],
+                                        reply_markup=create_kb(1, back_to_main='🔙 Назад'))
+
+
 @router.callback_query(F.data == 'back_to_buy_menu')
 async def handle_back_to_menu(callback: CallbackQuery):
     """Обработчик для возврата в главное меню из оплаты"""
