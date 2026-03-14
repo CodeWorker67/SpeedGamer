@@ -194,9 +194,6 @@ async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext, bot
         except Exception as e:
             await sql.update_broadcast_status(user_id, 'failed')  # Ошибка отправки
             logger.error(f"Failed to send message to {user_id}: {e}")
-            error_text = str(e)
-            if "403" in error_text or "blocked by the user" in error_text:
-                await sql.update_delete(user_id, True)
     logger.success(f"Send broadcast to {count} users")
 
     await callback.message.edit_text(f"Сообщение успешно отправлено {count} пользователям.")
@@ -256,8 +253,6 @@ async def admin_broadcast(message: Message):
 
             # Предположим, что send_message возвращает словарь с ответом Telegram API
             if not response.get("ok") and response.get("error_code") == 403:
-                # Пользователь заблокировал бота → обновляем Is_delete = False
-                await sql.update_delete(user_id, True)
                 blocked_updated += 1
             elif response.get("ok"):
                 success += 1
@@ -268,7 +263,6 @@ async def admin_broadcast(message: Message):
             # Альтернативный вариант, если send_message выбрасывает исключения
             error_text = str(e)
             if "403" in error_text or "blocked by the user" in error_text:
-                await sql.update_delete(user_id, True)
                 blocked_updated += 1
             else:
                 other_errors += 1

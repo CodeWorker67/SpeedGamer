@@ -99,9 +99,8 @@ async def send_message_cron(bot: Bot):
                             await asyncio.sleep(0.05)
                             await sql.mark_notification_as_sent(user_id)
                             sent_count_week += 1
-        except Exception as e:
+        except Exception:
             failed_count += 1
-            await sql.update_delete(user_id, True)
 
     await bot.send_message(1012882762, f'''
 Рассылка об окончании подписки:
