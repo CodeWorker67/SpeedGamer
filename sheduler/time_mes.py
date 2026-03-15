@@ -10,6 +10,7 @@ from logging_config import logger
 
 async def send_message_cron(bot: Bot):
     all_users = await sql.select_all_users()
+    await bot.send_message(1012882762, 'Начинаю ежедневную рассылку')
     sent_count_7 = 0
     sent_count_3 = 0
     sent_count_1 = 0
