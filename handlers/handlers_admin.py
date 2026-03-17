@@ -469,3 +469,158 @@ async def check_users_command(message: Message):
     except Exception as e:
         logger.exception("Ошибка в /check_users")
         await message.answer(f"❌ Ошибка: {str(e)}")
+
+
+@router.message(Command(commands=['send_gift']))
+async def send_gift_command(message: Message):
+    """Отправляет подарок (3 дня подписки) пользователям, созданным 16 или 17 марта 2026,
+    у которых in_panel=True, is_connect=False, is_delete=False."""
+    if message.from_user.id != 1012882762:
+        return
+
+    await message.answer("🔄 Начинаю отправку подарков...")
+
+    # Целевые даты
+    target_dates = (datetime(2026, 3, 16), datetime(2026, 3, 17))
+
+    # Получаем всех пользователей из БД (можно фильтровать на стороне Python, т.к. запрос сложный)
+    all_users = await sql.get_all_users()  # список объектов Users
+
+    # Фильтруем вручную
+    candidates = [1012882762]
+    for user in all_users:
+        if user.is_delete:
+            continue
+        if not user.in_panel:
+            continue
+        if user.is_connect:
+            continue
+        if user.create_user.date() not in [d.date() for d in target_dates]:
+            continue
+        candidates.append(user.user_id)
+
+    if not candidates:
+        await message.answer("❌ Нет пользователей, удовлетворяющих условиям.")
+        return
+    else:
+        await message.answer(f"Всего {len(candidates)} пользователей, удовлетворяющих условиям.")
+
+    success_count = 0
+    fail_count = 0
+
+    # Текст сообщения
+    gift_text = '''
+    🥵 Это была DDoS-атака!
+
+    Друзья, простите за временные неудобства. Сегодня нас пытались заблокировать, но у них ничего не вышло.
+    
+    Мы столкнулись с мощной DDoS-атакой, если у вас <b>не открывался личный кабинет — проблема уже решена.</b>
+    
+    🔥 Мы начислили вам <b>дополнительные 5 дней</b> к подписке, чтобы вы могли оценить удобство Ускорителя игр.
+
+    📱 Не можете настроить?
+    Если вы никак не могли разобраться с импортом конфигов — <b>смотрите видеоинструкцию</b>! Там всё разложено по полочкам.
+
+    🌐 Осталось только нажать кнопку "🔗 Подключить Ускоритель игр" — и вы в деле.
+            '''
+
+    for user_id in candidates:
+        try:
+            # Отправляем сообщение
+            await bot.send_message(user_id,
+                                   gift_text,
+                                   reply_markup=create_kb(1,
+                                                          video_faq='🎥 Видеоинструкция',
+                                                          connect_vpn='🔗 Подключить Ускоритель игр'))
+            # Добавляем 3 дня подписки
+            result = await x3.updateClient(5, str(user_id), user_id)
+            if result:
+                success_count += 1
+                logger.info(f"Подарок отправлен пользователю {user_id}")
+            else:
+                fail_count += 1
+                logger.error(f"Не удалось обновить подписку для {user_id}")
+            await asyncio.sleep(0.05)  # небольшая задержка
+        except Exception as e:
+            fail_count += 1
+            logger.error(f"Ошибка при обработке {user_id}: {e}")
+
+    await message.answer(
+        f"✅ Рассылка подарков завершена.\n"
+        f"👥 Найдено: {len(candidates)}\n"
+        f"✅ Успешно: {success_count}\n"
+        f"❌ Ошибок: {fail_count}"
+    )
+
+
+@router.message(Command(commands=['send_push']))
+async def send_push_command(message: Message):
+    """Отправляет информационное сообщение пользователям, созданным до 16 марта 2026,
+    с активной подпиской (in_panel=True, subscription_end_date > now, is_delete=False)."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    await message.answer("🔄 Начинаю отправку push-уведомления...")
+
+    # Текущая дата
+    now = datetime.now()
+    # Пороговая дата (исключительно до 16 марта)
+    threshold = datetime(2026, 3, 16)
+
+    # Получаем всех пользователей
+    all_users = await sql.get_all_users()
+
+    # Фильтруем
+    candidates = [1012882762]
+    for user in all_users:
+        if user.is_delete:
+            continue
+        if not user.in_panel:
+            continue
+        if user.create_user >= threshold:
+            continue
+        if not user.subscription_end_date or user.subscription_end_date <= now:
+            continue
+        candidates.append(user.user_id)
+
+        if not candidates:
+            await message.answer("❌ Нет пользователей, удовлетворяющих условиям.")
+            return
+        else:
+            await message.answer(f"Всего {len(candidates)} пользователей, удовлетворяющих условиям.")
+
+        push_text = '''
+🥵 Это была DDoS-атака!
+
+Друзья, простите за временные неудобства. Сегодня нас пытались заблокировать, но у них ничего не вышло.
+Мы столкнулись с мощной DDoS-атакой, если у вас <b>не открывался личный кабинет — проблема уже решена.</b>
+
+📱 Не можете настроить?
+Если вы никак не могли разобраться с импортом конфигов — <b>смотрите видеоинструкцию</b>! Там всё разложено по полочкам.
+
+🌐 Осталось только нажать кнопку "🔗 Подключить Ускоритель игр" — и вы снова в деле.
+        '''
+
+        success_count = 0
+        fail_count = 0
+
+        for user_id in candidates:
+            try:
+                await bot.send_message(user_id,
+                                       push_text,
+                                       reply_markup=create_kb(1,
+                                                              video_faq='🎥 Видеоинструкция',
+                                                              connect_vpn='🔗 Подключить Ускоритель игр'))
+                success_count += 1
+                logger.info(f"Push отправлен пользователю {user_id}")
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                fail_count += 1
+                logger.error(f"Ошибка отправки для {user_id}: {e}")
+
+        await message.answer(
+            f"✅ Рассылка завершена.\n"
+            f"👥 Найдено: {len(candidates)}\n"
+            f"✅ Успешно: {success_count}\n"
+            f"❌ Ошибок: {fail_count}"
+        )
