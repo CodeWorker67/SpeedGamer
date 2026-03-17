@@ -557,7 +557,7 @@ async def send_gift_command(message: Message):
 async def send_push_command(message: Message):
     """Отправляет информационное сообщение пользователям, созданным до 16 марта 2026,
     с активной подпиской (in_panel=True, subscription_end_date > now, is_delete=False)."""
-    if message.from_user.id not in ADMIN_IDS:
+    if message.from_user.id != 1012882762:
         return
 
     await message.answer("🔄 Начинаю отправку push-уведомления...")
@@ -589,7 +589,7 @@ async def send_push_command(message: Message):
         else:
             await message.answer(f"Всего {len(candidates)} пользователей, удовлетворяющих условиям.")
 
-        push_text = '''
+    push_text = '''
 🥵 Это была DDoS-атака!
 
 Друзья, простите за временные неудобства. Сегодня нас пытались заблокировать, но у них ничего не вышло.
@@ -599,28 +599,28 @@ async def send_push_command(message: Message):
 Если вы никак не могли разобраться с импортом конфигов — <b>смотрите видеоинструкцию</b>! Там всё разложено по полочкам.
 
 🌐 Осталось только нажать кнопку "🔗 Подключить Ускоритель игр" — и вы снова в деле.
-        '''
+    '''
 
-        success_count = 0
-        fail_count = 0
+    success_count = 0
+    fail_count = 0
 
-        for user_id in candidates:
-            try:
-                await bot.send_message(user_id,
-                                       push_text,
-                                       reply_markup=create_kb(1,
-                                                              video_faq='🎥 Видеоинструкция',
-                                                              connect_vpn='🔗 Подключить Ускоритель игр'))
-                success_count += 1
-                logger.info(f"Push отправлен пользователю {user_id}")
-                await asyncio.sleep(0.05)
-            except Exception as e:
-                fail_count += 1
-                logger.error(f"Ошибка отправки для {user_id}: {e}")
+    for user_id in candidates[22:]:
+        try:
+            await bot.send_message(user_id,
+                                   push_text,
+                                   reply_markup=create_kb(1,
+                                                          video_faq='🎥 Видеоинструкция',
+                                                          connect_vpn='🔗 Подключить Ускоритель игр'))
+            success_count += 1
+            logger.info(f"Push отправлен пользователю {user_id}")
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            fail_count += 1
+            logger.error(f"Ошибка отправки для {user_id}: {e}")
 
-        await message.answer(
-            f"✅ Рассылка завершена.\n"
-            f"👥 Найдено: {len(candidates)}\n"
-            f"✅ Успешно: {success_count}\n"
-            f"❌ Ошибок: {fail_count}"
-        )
+    await message.answer(
+        f"✅ Рассылка завершена.\n"
+        f"👥 Найдено: {len(candidates)}\n"
+        f"✅ Успешно: {success_count}\n"
+        f"❌ Ошибок: {fail_count}"
+    )
