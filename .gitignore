@@ -9,6 +9,7 @@ export.xlsx
 creds.json
 d.sh
 db/database.db
+speedgamer.db
 config_bd/speedgamer.db
 db/config.db
 load/userbot.py

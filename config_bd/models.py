@@ -30,6 +30,17 @@ class Users(Base):
     last_broadcast_date = Column(DateTime, nullable=True)
     stamp = Column(String(100), nullable=False)
     ttclid = Column(String(100), nullable=True)
+    subscribtion = Column(String(255), nullable=True)
+    white_subscription = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True)
+    password = Column(String(255), nullable=True)
+    activation_pass = Column(String(255), nullable=True)
+    field_str_1 = Column(String(255), nullable=True)
+    field_str_2 = Column(String(255), nullable=True)
+    field_str_3 = Column(String(255), nullable=True)
+    field_bool_1 = Column(Boolean, default=False)
+    field_bool_2 = Column(Boolean, default=False)
+    field_bool_3 = Column(Boolean, default=False)
 
 
 class Gifts(Base):
