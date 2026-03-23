@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import select, update, func
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from datetime import datetime, date
 from typing import Optional, List, Tuple, Dict
 
@@ -35,23 +36,26 @@ class AsyncSQL:
 
     async def add_user(self, user_id: int, in_panel: bool, is_connect: bool = False,
                      ref: str = '', is_delete: bool = False, in_chanel: bool = False,
-                     stamp=''):
+                     stamp='') -> bool:
+        """Возвращает True, если пользователь был вставлен; False если уже существовал (гонки /start)."""
         async with self.session_factory() as session:
-            user = Users(
+            stmt = sqlite_insert(Users).values(
                 user_id=user_id,
                 ref=ref,
                 is_delete=is_delete,
                 in_panel=in_panel,
                 is_connect=is_connect,
                 in_chanel=in_chanel,
-                stamp=stamp
-            )
-            session.add(user)
+                stamp=stamp,
+            ).on_conflict_do_nothing(index_elements=[Users.user_id])
             try:
+                result = await session.execute(stmt)
                 await session.commit()
+                return (result.rowcount or 0) > 0
             except Exception as e:
                 await session.rollback()
                 logger.error(f"Error inserting user {user_id}: {e}")
+                return False
 
     async def update_in_panel(self, user_id: int):
         async with self.session_factory() as session:

@@ -103,8 +103,9 @@ async def process_start_command(message: Message, command: Command):
                 stamp = message.text.split(' ')[1]
 
     if not existing:
-        await sql.add_user(message.from_user.id, False, False, ref=ref_login, stamp=stamp)
-        logger.info(f'Юзер {message.from_user.id} - {message.from_user.username} добавлен в БД')
+        inserted = await sql.add_user(message.from_user.id, False, False, ref=ref_login, stamp=stamp)
+        if inserted:
+            logger.info(f'Юзер {message.from_user.id} - {message.from_user.username} добавлен в БД')
         if ttclid:
             await sql.update_ttclid(message.from_user.id, ttclid)
             logger.info(f'Юзеру {message.from_user.id} - {message.from_user.username} присвоен ttclid')

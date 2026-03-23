@@ -397,8 +397,11 @@ async def analytics_export(message: Message):
                 )
                 users_before = (await session.execute(stmt_before)).all()
                 cum_users_before = len(users_before)
-                cum_key_before = sum(1 for u in users_before if u.is_pay_null)
-                cum_connect_before = sum(1 for u in users_before if u.is_tarif)
+                cum_key_before = sum(1 for u in users_before if u.in_panel)
+                cum_connect_before = sum(1 for u in users_before if u.is_connect)
+
+                # Закрываем read-транзакцию до тяжёлой обработки в Python (меньше времени удержания lock)
+                await session.commit()
 
                 daily_cumulative = []
                 cum_users = cum_users_before

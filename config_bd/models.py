@@ -1,10 +1,27 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, Date, Float
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, Date, Float, event
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase
 from datetime import datetime
 
 DB_URL = "sqlite+aiosqlite:///config_bd/speedgamer.db"
-engine = create_async_engine(DB_URL, echo=False)
+# timeout: сколько секунд ждать при занятой БД (sqlite3 busy handler)
+engine = create_async_engine(
+    DB_URL,
+    echo=False,
+    connect_args={"timeout": 30.0},
+)
+
+
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.close()
+
+
+event.listen(engine.sync_engine, "connect", _set_sqlite_pragma)
+
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
