@@ -291,6 +291,10 @@ async def activate_gift(message: Message, gift_id: str):
     if white_flag:
         user_id_str += '_white'
 
+    was_in_db = await sql.get_user(message.from_user.id) is not None
+    if not was_in_db:
+        await sql.add_user(message.from_user.id, False)
+
 
     # Проверяем существует ли пользователь
     existing_user = await x3.get_user_by_username(user_id_str)
@@ -306,12 +310,11 @@ async def activate_gift(message: Message, gift_id: str):
         subscription_time = result_active.get('time', '-')
 
         # Обновляем базу данных
-        if await sql.get_user(message.from_user.id) is not None:
-            await sql.update_in_panel(message.from_user.id)
+        await sql.update_in_panel(message.from_user.id)
+        if was_in_db:
             logger.info(
                 f'Юзер {message.from_user.id} - {message.from_user.username} получил в подарок подписку, уже был в БД')
         else:
-            await sql.add_user(message.from_user.id, True)
             logger.success(
                 f'Юзер {message.from_user.id} - {message.from_user.username} зашел в бота в первый раз и получил подарочную подписку')
 
