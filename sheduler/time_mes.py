@@ -3,7 +3,7 @@ from datetime import datetime
 from aiogram import Bot
 
 from bot import sql, x3
-from keyboard import keyboard_tariff, keyboard_tariff_trial, create_kb
+from keyboard import keyboard_tariff, keyboard_tariff_trial, create_kb, STYLE_PRIMARY
 from lexicon import lexicon
 from logging_config import logger
 
@@ -60,7 +60,10 @@ async def send_message_cron(bot: Bot):
 
                         await bot.send_message(chat_id=user_id,
                                                text=lexicon['second_chance_message'],
-                                               reply_markup=create_kb(1, connect_vpn='🔗 Подключить SpeedGamer'))
+                                               reply_markup=create_kb(
+                                                   1,
+                                                   styles={'connect_vpn': STYLE_PRIMARY},
+                                                   connect_vpn='🔗 Подключить SpeedGamer'))
 
                         user_id_str = str(user_id)
                         try:

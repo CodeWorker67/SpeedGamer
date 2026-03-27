@@ -3,7 +3,7 @@ import urllib.parse
 from bot import sql
 from botapi_sender import send_message
 from config import ADMIN_IDS
-from keyboard import create_kb, keyboard_tariff
+from keyboard import create_kb, keyboard_tariff, STYLE_PRIMARY, STYLE_SUCCESS
 from logging_config import logger
 import asyncio
 from aiogram import Router, Bot, F
@@ -121,7 +121,7 @@ async def confirm_broadcast(message: Message, state: FSMContext):
 
     # Создаем клавиатуру для подтверждения
     confirm_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Подтвердить", callback_data="Подтвердить")],
+        [InlineKeyboardButton(text="Подтвердить", callback_data="Подтвердить", style="success")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="broadcast_cancel")]
     ])
 
@@ -149,28 +149,29 @@ async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext, bot
     # Получаем пользователей по выбранному параметру
     if selected_parameter == "all_users":
         user_ids = await sql.select_all_users()  # Получаем всех пользователей
-        keyboard_broadcast = create_kb(1, ref='👥 Рефералка')
+        keyboard_broadcast = create_kb(1, styles={'ref': STYLE_PRIMARY}, ref='👥 Рефералка')
     elif selected_parameter == 'not_connected_subscribe_yes':
         user_ids = await sql.select_not_connected_subscribe_yes()
-        keyboard_broadcast = create_kb(1, connect_vpn='🔗 Подключить SpeedGamer')
+        keyboard_broadcast = create_kb(
+            1, styles={'connect_vpn': STYLE_PRIMARY}, connect_vpn='🔗 Подключить SpeedGamer')
     elif selected_parameter == 'not_connected_subscribe_off':
         user_ids = await sql.select_not_connected_subscribe_off()
-        keyboard_broadcast = create_kb(1, buy_vpn='🛒 Купить подписку')
+        keyboard_broadcast = create_kb(1, styles={'buy_vpn': STYLE_PRIMARY}, buy_vpn='🛒 Купить подписку')
     elif selected_parameter == 'connected_subscribe_off':
         user_ids = await sql.select_connected_subscribe_off()
-        keyboard_broadcast = create_kb(1, buy_vpn='🛒 Купить подписку')
+        keyboard_broadcast = create_kb(1, styles={'buy_vpn': STYLE_PRIMARY}, buy_vpn='🛒 Купить подписку')
     elif selected_parameter == 'connected_subscribe_yes':
         user_ids = await sql.select_connected_subscribe_yes()
         keyboard_broadcast = None
     elif selected_parameter == 'not_subscribed':
         user_ids = await sql.select_subscribe_off()
-        keyboard_broadcast = create_kb(1, free_vpn='🔥 Попробовать бесплатно')
+        keyboard_broadcast = create_kb(1, styles={'free_vpn': STYLE_SUCCESS}, free_vpn='🔥 Попробовать бесплатно')
     elif selected_parameter == 'subscribed':
         user_ids = await sql.select_subscribe_yes()
         keyboard_broadcast = keyboard_tariff()
     elif selected_parameter == 'connected_never_paid':
         user_ids = await sql.select_connected_never_paid()
-        keyboard_broadcast = create_kb(1, r_120='🔥 Акция: 120 дней - 269 руб')
+        keyboard_broadcast = create_kb(1, styles={'r_120': STYLE_SUCCESS}, r_120='🔥 Акция: 120 дней - 269 руб')
 
     # Проверяем, есть ли пользователи для отправки
     if not user_ids:

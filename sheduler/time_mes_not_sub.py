@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from bot import bot, sql
-from keyboard import create_kb
+from keyboard import create_kb, STYLE_PRIMARY, STYLE_SUCCESS
 from lexicon import lexicon
 from logging_config import logger
 
@@ -52,7 +52,8 @@ async def send_push_cron(debug: bool = False):
 
                     if message_text:
                         try:
-                            keyboard_broadcast = create_kb(1, free_vpn='🔥 Попробовать бесплатно')
+                            keyboard_broadcast = create_kb(
+                                1, styles={'free_vpn': STYLE_SUCCESS}, free_vpn='🔥 Попробовать бесплатно')
                             if video_flag:
                                 await bot.send_video(
                                     chat_id=user_id,
@@ -84,7 +85,10 @@ async def send_push_cron(debug: bool = False):
 
                     if message_text:
                         try:
-                            keyboard_broadcast = create_kb(1, connect_vpn='🔗 Подключить SpeedGamer')
+                            keyboard_broadcast = create_kb(
+                                1,
+                                styles={'connect_vpn': STYLE_PRIMARY},
+                                connect_vpn='🔗 Подключить SpeedGamer')
                             if video_flag:
                                 await bot.send_video(
                                     chat_id=user_id,

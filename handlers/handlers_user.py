@@ -4,9 +4,9 @@ import requests
 from bot import sql, x3, bot
 from config import CHANEL_ID, ADMIN_IDS, BOT_URL
 from keyboard import (keyboard_start, keyboard_start_bonus, keyboard_tariff_bonus, keyboard_tariff,
-                      keyboard_subscription, ref_keyboard, keyboard_gift_tariff, keyboard_payment_method,
-                      keyboard_payment_method_stock, chanel_keyboard, keyboard_tariff_old, keyboard_inline_ref,
-                      create_kb)
+                      keyboard_subscription, keyboard_sub_after_free, ref_keyboard, keyboard_gift_tariff,
+                      keyboard_payment_method, keyboard_payment_method_stock, keyboard_tariff_old,
+                      keyboard_inline_ref, create_kb)
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
@@ -190,9 +190,11 @@ async def free_vpn_cb(callback: CallbackQuery):
     if user_data is not None and len(user_data) > 4:
         in_panel = user_data[4]
     if in_panel:
+        await callback.answer()
         await callback.message.answer(text=lexicon['free_vpn_no'],
                                       reply_markup=keyboard_start())
         return
+    await callback.answer()
     # Проверка на наличие данных
     # await x3.test_connect()
     logger.info(await x3.addClient(day, str(callback.from_user.id), int(callback.from_user.id)))
@@ -208,32 +210,14 @@ async def free_vpn_cb(callback: CallbackQuery):
     sub_url = await x3.sublink(user_id)
 
     await callback.message.answer(text=lexicon['buy_success'].format(time, sub_url),
-                                  reply_markup=keyboard_subscription(sub_url, None),
+                                  reply_markup=keyboard_sub_after_free(sub_url),
                                   disable_web_page_preview=True)
-    await asyncio.sleep(1)
-    await callback.message.answer(lexicon['to_chanel'], reply_markup=chanel_keyboard())
-    await callback.answer()
 
 
-@router.callback_query(F.data == 'info')
-async def faq(callback: CallbackQuery):
+@router.callback_query(F.data == "info")
+async def info_legacy(callback: CallbackQuery):
+    """Старая кнопка «Информация» снята с меню; отвечаем на callback со старых сообщений."""
     await callback.answer()
-    user_data = await sql.get_user(callback.from_user.id)
-    in_panel = False
-    if user_data is not None and len(user_data) > 4:
-        in_panel = user_data[4]
-    if in_panel:
-        await callback.message.answer(
-            text=lexicon['start'],
-            reply_markup=keyboard_start(),
-            disable_web_page_preview=True
-        )
-    else:
-        await callback.message.answer(
-            text=lexicon['start_bonus'],
-            reply_markup=keyboard_start_bonus(),
-            disable_web_page_preview=True
-        )
 
 
 @router.callback_query(F.data == 'ref')

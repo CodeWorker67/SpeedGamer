@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from bot import sql, x3, bot
 from config import ADMIN_IDS
-from keyboard import create_kb
+from keyboard import create_kb, STYLE_PRIMARY
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
@@ -303,7 +303,10 @@ async def sync_panel(message: Message):
     await bot.send_message(1012882762,
                            'Добрый день. Мы создали Вам личный кабинет и начислили 5 дней пробного '
                            'доступа.\nПерейдите по ссылке, нажав на кнопку 🔗 Подключить SpeedGamer',
-                           reply_markup=create_kb(1, connect_vpn='🔗 Подключить SpeedGamer'))
+                           reply_markup=create_kb(
+                               1,
+                               styles={'connect_vpn': STYLE_PRIMARY},
+                               connect_vpn='🔗 Подключить SpeedGamer'))
 
     for user_id in users_for_sync:
         # Проверяем, есть ли пользователь в панели
@@ -331,7 +334,10 @@ async def sync_panel(message: Message):
                 await bot.send_message(user_id,
                                        'Добрый день. Мы создали Вам личный кабинет и начислили 5 дней пробного '
                                        'доступа.\nПерейдите по ссылке, нажав на кнопку 🔗 Подключить SpeedGamer',
-                                       reply_markup=create_kb(1, connect_vpn='🔗 Подключить SpeedGamer'))
+                                       reply_markup=create_kb(
+                                           1,
+                                           styles={'connect_vpn': STYLE_PRIMARY},
+                                           connect_vpn='🔗 Подключить SpeedGamer'))
             else:
                 not_found += 1
                 logger.warning(f"Не удалось добавить в панель пользователя {user_id}")
@@ -605,9 +611,14 @@ async def send_gift_command(message: Message):
             # Отправляем сообщение
             await bot.send_message(user_id,
                                    gift_text,
-                                   reply_markup=create_kb(1,
-                                                          video_faq='🎥 Видеоинструкция',
-                                                          connect_vpn='🔗 Подключить Ускоритель игр'))
+                                   reply_markup=create_kb(
+                                       1,
+                                       styles={
+                                           'video_faq': STYLE_PRIMARY,
+                                           'connect_vpn': STYLE_PRIMARY,
+                                       },
+                                       video_faq='🎥 Видеоинструкция',
+                                       connect_vpn='🔗 Подключить Ускоритель игр'))
             # Добавляем 3 дня подписки
             result = await x3.updateClient(5, str(user_id), user_id)
             if result:
@@ -684,9 +695,14 @@ async def send_push_command(message: Message):
         try:
             await bot.send_message(user_id,
                                    push_text,
-                                   reply_markup=create_kb(1,
-                                                          video_faq='🎥 Видеоинструкция',
-                                                          connect_vpn='🔗 Подключить Ускоритель игр'))
+                                   reply_markup=create_kb(
+                                       1,
+                                       styles={
+                                           'video_faq': STYLE_PRIMARY,
+                                           'connect_vpn': STYLE_PRIMARY,
+                                       },
+                                       video_faq='🎥 Видеоинструкция',
+                                       connect_vpn='🔗 Подключить Ускоритель игр'))
             success_count += 1
             logger.info(f"Push отправлен пользователю {user_id}")
             await asyncio.sleep(0.05)
