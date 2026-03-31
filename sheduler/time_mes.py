@@ -209,9 +209,12 @@ async def send_message_cron(bot: Bot):
                             await _persist_push_state(user_id, end_key, sent)
                             await sql.mark_notification_as_sent(user_id)
                             sent_count_week += 1
+                            logger.info(
+                                f"Отправлено push-уведомление пользователю {user_id} "
+                                f"после окончания подписки (+{3 * n} дн от даты end)"
+                            )
                             break
                         n += 1
-                        logger.info(f"Отправлено push-уведомление пользователю {user_id} за {3 * n} дней")
         except Exception:
             failed_count += 1
 
