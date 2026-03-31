@@ -454,7 +454,7 @@ def ref_keyboard(user_id):
             [
                 InlineKeyboardButton(
                     text="Пригласить друзей🫶",
-                    url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка для тебя на Игровой ускоритель!')}"
+                    url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка для тебя на Игровой ускоритель!')}",
                     style=STYLE_SUCCESS,
                 )
             ],
