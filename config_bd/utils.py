@@ -1,8 +1,8 @@
 import uuid
 
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, or_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 
 from config_bd.models import AsyncSessionLocal, Users, Payments, Gifts, PaymentsCryptobot, PaymentsStars, Online, \
@@ -175,6 +175,33 @@ class AsyncSQL:
     async def select_all_users(self) -> List[int]:
         async with self.session_factory() as session:
             stmt = select(Users.user_id).where(Users.is_delete == False)
+            result = await session.execute(stmt)
+            return [row[0] for row in result.all()]
+
+    async def select_user_ids_for_subscription_expiry_push(
+        self, now_utc_naive: datetime, window: timedelta
+    ) -> List[int]:
+        """
+        Кандидаты на push по окончанию подписки (sheduler.time_mes).
+        Активные: end в (now, now + 7 дней + window] — возможны окна 7/3/1 дн и 1 ч.
+        Истёкшие: end в [now - 621 дн, now] — second_chance (+7 дн) и post-expiry p1..p200 (шаг 3 дн).
+        """
+        active_upper = now_utc_naive + timedelta(days=7) + window
+        expired_lower = now_utc_naive - timedelta(days=621)
+        async with self.session_factory() as session:
+            stmt = (
+                select(Users.user_id)
+                .where(
+                    Users.is_delete == False,
+                    Users.subscription_end_date.isnot(None),
+                    or_(
+                        (Users.subscription_end_date > now_utc_naive)
+                        & (Users.subscription_end_date <= active_upper),
+                        (Users.subscription_end_date <= now_utc_naive)
+                        & (Users.subscription_end_date >= expired_lower),
+                    ),
+                )
+            )
             result = await session.execute(stmt)
             return [row[0] for row in result.all()]
 

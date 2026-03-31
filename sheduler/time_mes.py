@@ -1,7 +1,9 @@
 import asyncio
 import json
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Set
+from typing import List, Optional, Set
+
+TG_TEXT_LIMIT = 4096
 
 from aiogram import Bot
 
@@ -63,9 +65,43 @@ async def _persist_push_state(user_id: int, end_key: str, sent: Set[str]):
     await sql.update_field_str_1(user_id, _dump_state(end_key, sent))
 
 
+def _format_ids_line(label: str, ids: List[int]) -> str:
+    if not ids:
+        return f'{label}: —'
+    return f'{label}:\n{", ".join(map(str, ids))}'
+
+
+async def _send_admin_text_chunks(bot: Bot, chat_id: int, text: str):
+    """Telegram ограничивает длину сообщения; длинные списки id режем на части."""
+    text = text.strip()
+    if len(text) <= TG_TEXT_LIMIT:
+        await bot.send_message(chat_id, text)
+        return
+    part = 1
+    pos = 0
+    n = len(text)
+    while pos < n:
+        take = TG_TEXT_LIMIT - 80
+        chunk = text[pos : pos + take]
+        if pos + take < n:
+            cut = chunk.rfind('\n')
+            if cut > take // 2:
+                chunk = chunk[:cut]
+            elif (cut := chunk.rfind(', ')) > take // 2:
+                chunk = chunk[: cut + 1]
+        header = f'Часть {part}\n\n' if part > 1 else ''
+        await bot.send_message(chat_id, header + chunk)
+        pos += len(chunk)
+        part += 1
+
+
 async def send_message_cron(bot: Bot):
-    all_users = await sql.select_all_users()
-    await bot.send_message(1012882762, 'Начинаю рассылку (проверка каждые 10 мин, UTC)')
+    now = _utc_now_naive()
+    candidate_ids = await sql.select_user_ids_for_subscription_expiry_push(now, WINDOW)
+    await bot.send_message(
+        1012882762,
+        f'Начинаю рассылку (UTC, окно {WINDOW}, кандидатов по дате end: {len(candidate_ids)})',
+    )
     sent_count_7 = 0
     sent_count_3 = 0
     sent_count_1 = 0
@@ -73,10 +109,14 @@ async def send_message_cron(bot: Bot):
     sent_count_week = 0
     sent_count_second_chance = 0
     failed_count = 0
+    ids_7: List[int] = []
+    ids_3: List[int] = []
+    ids_1: List[int] = []
+    ids_0: List[int] = []
+    ids_week: List[int] = []
+    ids_second_chance: List[int] = []
 
-    now = _utc_now_naive()
-
-    for user_id in all_users:
+    for user_id in candidate_ids:
         try:
             user_data = await sql.get_user(user_id)
             if not user_data:
@@ -114,8 +154,8 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_7 += 1
+                    ids_7.append(user_id)
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 7 дней")
-                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 7 дней")
                 elif '3' not in sent and _in_send_window(now, t3):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -123,8 +163,8 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_3 += 1
+                    ids_3.append(user_id)
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 3 дня")
-                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 3 дня")
                 elif '1' not in sent and _in_send_window(now, t1):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_1'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -132,8 +172,8 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_1 += 1
+                    ids_1.append(user_id)
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 день")
-                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 1 день")
                 elif 'h' not in sent and _in_send_window(now, t_h):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_0'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -141,8 +181,8 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_0 += 1
+                    ids_0.append(user_id)
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 час")
-                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 1 час")
             else:
                 t_second = end + timedelta(days=7)
                 if (
@@ -160,7 +200,6 @@ async def send_message_cron(bot: Bot):
                         ),
                     )
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за second_chance")
-                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за second_chance")
                     user_id_str = str(user_id)
                     try:
                         response = await x3.updateClient(4, user_id_str, user_id)
@@ -198,6 +237,7 @@ async def send_message_cron(bot: Bot):
                     sent.add('sc')
                     await _persist_push_state(user_id, end_key, sent)
                     sent_count_second_chance += 1
+                    ids_second_chance.append(user_id)
                 else:
                     n = 1
                     while n <= 200:
@@ -214,20 +254,20 @@ async def send_message_cron(bot: Bot):
                             await _persist_push_state(user_id, end_key, sent)
                             await sql.mark_notification_as_sent(user_id)
                             sent_count_week += 1
+                            ids_week.append(user_id)
                             logger.info(
                                 f"Отправлено push-уведомление пользователю {user_id} "
                                 f"после окончания подписки (+{3 * n} дн от даты end)"
                             )
-                            await message.answer(f"Отправлено push-уведомление пользователю {user_id} после окончания подписки (+{3 * n} дн от даты end)")
                             break
                         n += 1
         except Exception:
             failed_count += 1
 
-    await bot.send_message(
-        1012882762,
-        f'''
-Рассылка об окончании подписки (UTC, окна 10 мин):
+    all_sent_ids: List[int] = (
+        ids_7 + ids_3 + ids_1 + ids_0 + ids_week + ids_second_chance
+    )
+    report_body = f'''Рассылка об окончании подписки (UTC, окна 10 мин):
 за 7 дней: {sent_count_7}
 за 3 дня: {sent_count_3}
 за 1 день: {sent_count_1}
@@ -236,9 +276,20 @@ async def send_message_cron(bot: Bot):
 повторный триал: {sent_count_second_chance}
 
 Не получилось: {failed_count}
-''',
-    )
+
+— ID по типам —
+{_format_ids_line('за 7 дней', ids_7)}
+{_format_ids_line('за 3 дня', ids_3)}
+{_format_ids_line('за 1 день', ids_1)}
+{_format_ids_line('за 1 час', ids_0)}
+{_format_ids_line('после окончания (push_off)', ids_week)}
+{_format_ids_line('повторный триал (second_chance)', ids_second_chance)}
+
+— все id, кому ушло сообщение ({len(all_sent_ids)}) —
+{", ".join(map(str, all_sent_ids)) if all_sent_ids else '—'}'''
+    await _send_admin_text_chunks(bot, 1012882762, report_body)
+    total_sent = len(all_sent_ids)
     logger.info(
-        f"Уведомлений отправлено: {sent_count_7 + sent_count_3 + sent_count_1 + sent_count_0 + sent_count_week}"
+        f"Уведомлений отправлено: {total_sent}"
     )
     logger.info(f"Не удалось отправить уведомления: {failed_count}")
