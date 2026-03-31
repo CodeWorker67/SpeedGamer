@@ -115,6 +115,7 @@ async def send_message_cron(bot: Bot):
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_7 += 1
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 7 дней")
+                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 7 дней")
                 elif '3' not in sent and _in_send_window(now, t3):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -123,6 +124,7 @@ async def send_message_cron(bot: Bot):
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_3 += 1
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 3 дня")
+                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 3 дня")
                 elif '1' not in sent and _in_send_window(now, t1):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_1'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -131,6 +133,7 @@ async def send_message_cron(bot: Bot):
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_1 += 1
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 день")
+                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 1 день")
                 elif 'h' not in sent and _in_send_window(now, t_h):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_0'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -139,6 +142,7 @@ async def send_message_cron(bot: Bot):
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_0 += 1
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 час")
+                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за 1 час")
             else:
                 t_second = end + timedelta(days=7)
                 if (
@@ -156,6 +160,7 @@ async def send_message_cron(bot: Bot):
                         ),
                     )
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за second_chance")
+                    await message.answer(f"Отправлено push-уведомление пользователю {user_id} за second_chance")
                     user_id_str = str(user_id)
                     try:
                         response = await x3.updateClient(4, user_id_str, user_id)
@@ -213,6 +218,7 @@ async def send_message_cron(bot: Bot):
                                 f"Отправлено push-уведомление пользователю {user_id} "
                                 f"после окончания подписки (+{3 * n} дн от даты end)"
                             )
+                            await message.answer(f"Отправлено push-уведомление пользователю {user_id} после окончания подписки (+{3 * n} дн от даты end)")
                             break
                         n += 1
         except Exception:
