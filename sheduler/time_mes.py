@@ -114,6 +114,7 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_7 += 1
+                    logger.info(f"Отправлено push-уведомление пользователю {user_id} за 7 дней")
                 elif '3' not in sent and _in_send_window(now, t3):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -121,6 +122,7 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_3 += 1
+                    logger.info(f"Отправлено push-уведомление пользователю {user_id} за 3 дня")
                 elif '1' not in sent and _in_send_window(now, t1):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_1'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -128,6 +130,7 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_1 += 1
+                    logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 день")
                 elif 'h' not in sent and _in_send_window(now, t_h):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_0'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
@@ -135,7 +138,7 @@ async def send_message_cron(bot: Bot):
                     await _persist_push_state(user_id, end_key, sent)
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_0 += 1
-
+                    logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 час")
             else:
                 t_second = end + timedelta(days=7)
                 if (
@@ -152,7 +155,7 @@ async def send_message_cron(bot: Bot):
                             connect_vpn='🔗 Подключить SpeedGamer',
                         ),
                     )
-
+                    logger.info(f"Отправлено push-уведомление пользователю {user_id} за second_chance")
                     user_id_str = str(user_id)
                     try:
                         response = await x3.updateClient(4, user_id_str, user_id)
@@ -190,7 +193,6 @@ async def send_message_cron(bot: Bot):
                     sent.add('sc')
                     await _persist_push_state(user_id, end_key, sent)
                     sent_count_second_chance += 1
-
                 else:
                     n = 1
                     while n <= 200:
@@ -209,7 +211,7 @@ async def send_message_cron(bot: Bot):
                             sent_count_week += 1
                             break
                         n += 1
-
+                        logger.info(f"Отправлено push-уведомление пользователю {user_id} за {3 * n} дней")
         except Exception:
             failed_count += 1
 

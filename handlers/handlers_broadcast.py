@@ -2,7 +2,7 @@ import urllib.parse
 
 from bot import sql
 from botapi_sender import send_message
-from config import ADMIN_IDS
+from config import ADMIN_IDS, BOT_URL
 from keyboard import create_kb, keyboard_tariff, STYLE_PRIMARY, STYLE_SUCCESS
 from logging_config import logger
 import asyncio
@@ -149,17 +149,7 @@ async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext, bot
     # Получаем пользователей по выбранному параметру
     if selected_parameter == "all_users":
         user_ids = await sql.select_all_users()  # Получаем всех пользователей
-        keyboard_broadcast = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                InlineKeyboardButton(
-                    text="Поделиться 💬",
-                    url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка для тебя на надежный VPN!')}",
-                    style=STYLE_SUCCESS,
-                )
-            ]
-            ]
-        )
+        keyboard_broadcast = None
     elif selected_parameter == 'not_connected_subscribe_yes':
         user_ids = await sql.select_not_connected_subscribe_yes()
         keyboard_broadcast = create_kb(
@@ -193,6 +183,17 @@ async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext, bot
     user_ids.append(1012882762)
     for user_id in user_ids:
         try:
+            keyboard_broadcast = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                InlineKeyboardButton(
+                    text="Поделиться 💬",
+                    url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка для тебя на надежный VPN!')}",
+                    style=STYLE_SUCCESS,
+                )
+            ]
+            ]
+            )
             await bot.copy_message(
                 chat_id=user_id,
                 from_chat_id=broadcast_chat_id,
