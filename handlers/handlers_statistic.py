@@ -14,7 +14,7 @@ from openpyxl.chart import LineChart, BarChart, Reference
 from sqlalchemy import select, func
 
 from bot import sql
-from config import ADMIN_IDS, CHECKER_IDS
+from config import ADMIN_IDS, CHECKER_ID
 from logging_config import logger
 from config_bd.models import AsyncSessionLocal, Users, Payments, PaymentsStars, PaymentsCryptobot, PaymentsCards, \
     PaymentsPlategaCrypto
@@ -209,8 +209,10 @@ def _sync_build_analytics_excel(monthly_data: dict, daily_data_by_month: dict) -
 
 @router.message(Command(commands=['stat']))
 async def stat_command(message: Message):
-    """Статистика по пользователям с указанным Ref или stamp (админы и CHECKER_IDS)."""
-    if message.from_user.id not in ADMIN_IDS | CHECKER_IDS:
+    """Статистика по пользователям с указанным Ref или stamp (админы и CHECKER_ID)."""
+    if message.from_user.id not in ADMIN_IDS and (
+        CHECKER_ID is None or message.from_user.id != CHECKER_ID
+    ):
         return
 
     args = message.text.split()

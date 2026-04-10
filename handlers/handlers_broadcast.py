@@ -2,7 +2,7 @@ import urllib.parse
 
 from bot import sql
 from botapi_sender import send_message
-from config import ADMIN_IDS, BOT_URL
+from config import ADMIN_IDS, BOT_URL, CHECKER_ID
 from keyboard import create_kb, keyboard_tariff, STYLE_PRIMARY, STYLE_SUCCESS
 from logging_config import logger
 import asyncio
@@ -180,7 +180,8 @@ async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext, bot
         return
     count = 0
     # Отправляем сообщение пользователям
-    user_ids.append(1012882762)
+    if CHECKER_ID is not None:
+        user_ids.append(CHECKER_ID)
     for user_id in user_ids:
         try:
             await bot.copy_message(
@@ -243,9 +244,9 @@ async def admin_broadcast(message: Message):
 Не жадничайте, скиньте этот пост контактам, у которых вечно нет нормального VPN. Сделайте им подарок 😉
         '''
     button_text = "Пригласить друзей🫶"
-    url = f"https://t.me/share/url?url=https://t.me/zoomerskyvpn_bot?start=ref{1012882762}&text={urllib.parse.quote('Держи надежный VPN, там еще и большой пробный период!')}"
-    # Отправка сообщения через botapi_sender
-    send_message(chat_id=1012882762, text=text, button_text=button_text, url=url)
+    if CHECKER_ID is not None:
+        url = f"https://t.me/share/url?url=https://t.me/zoomerskyvpn_bot?start=ref{CHECKER_ID}&text={urllib.parse.quote('Держи надежный VPN, там еще и большой пробный период!')}"
+        send_message(chat_id=CHECKER_ID, text=text, button_text=button_text, url=url)
     for user_id in users:
         try:
             url = f"https://t.me/share/url?url=https://t.me/zoomerskyvpn_bot?start=ref{user_id}&text={urllib.parse.quote('Держи надежный VPN, там еще и большой пробный период!')}"
