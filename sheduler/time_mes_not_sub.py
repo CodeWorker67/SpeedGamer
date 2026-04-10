@@ -53,20 +53,32 @@ async def send_push_cron(debug: bool = False):
 
                     if message_text:
                         try:
-                            keyboard_broadcast = create_kb(
-                                1, styles={'free_vpn': STYLE_SUCCESS}, free_vpn='🔥 Попробовать бесплатно')
+                            keyboard_broadcast_mes = create_kb(
+                                1,
+                                styles={
+                                    'free_vpn': STYLE_SUCCESS,
+                                    'video_faq': STYLE_PRIMARY,
+                                },
+                                free_vpn='🔥 Попробовать бесплатно',
+                                video_faq='🎥 Видеоинструкция',
+                            )
+                            keyboard_broadcast_video = create_kb(
+                                1,
+                                styles={'free_vpn': STYLE_SUCCESS},
+                                free_vpn='🔥 Попробовать бесплатно',
+                            )
                             if video_flag:
                                 await bot.send_video(
                                     chat_id=user_id,
                                     video='BAACAgIAAxkBAAECpqNpqrDnzrb_G1rcEtZli39lGgVpMAACa5sAAl9MWUmxYN_rJYzPVToE',
                                     caption=message_text,
-                                    reply_markup=keyboard_broadcast
+                                    reply_markup=keyboard_broadcast_video
                                 )
                             else:
                                 await bot.send_message(
                                     chat_id=user_id,
                                     text=message_text,
-                                    reply_markup=keyboard_broadcast
+                                    reply_markup=keyboard_broadcast_mes
                                 )
                             sent_count_not_sub += 1
                             logger.info(f"Отправлено push-уведомление пользователю {user_id}")
@@ -86,22 +98,32 @@ async def send_push_cron(debug: bool = False):
 
                     if message_text:
                         try:
-                            keyboard_broadcast = create_kb(
+                            keyboard_broadcast_mes = create_kb(
+                                1,
+                                styles={
+                                    'connect_vpn': STYLE_PRIMARY,
+                                    'video_faq': STYLE_PRIMARY,
+                                },
+                                connect_vpn='🔗 Подключить SpeedGamer',
+                                video_faq='🎥 Видеоинструкция',
+                            )
+                            keyboard_broadcast_video = create_kb(
                                 1,
                                 styles={'connect_vpn': STYLE_PRIMARY},
-                                connect_vpn='🔗 Подключить SpeedGamer')
+                                connect_vpn='🔗 Подключить SpeedGamer',
+                            )
                             if video_flag:
                                 await bot.send_video(
                                     chat_id=user_id,
                                     video='BAACAgIAAxkBAAECpqNpqrDnzrb_G1rcEtZli39lGgVpMAACa5sAAl9MWUmxYN_rJYzPVToE',
                                     caption=message_text,
-                                    reply_markup=keyboard_broadcast
+                                    reply_markup=keyboard_broadcast_video
                                 )
                             else:
                                 await bot.send_message(
                                     chat_id=user_id,
                                     text=message_text,
-                                    reply_markup=keyboard_broadcast
+                                    reply_markup=keyboard_broadcast_mes
                                 )
                             sent_count_not_connect += 1
                             logger.info(f"Отправлено push-уведомление пользователю {user_id}")
