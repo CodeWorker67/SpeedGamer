@@ -24,25 +24,6 @@ router = Router()
 
 
 # ---------- Вспомогательные функции конвертации ----------
-def convert_stars_to_rub(amount: int) -> Optional[int]:
-    mapping = {
-        66: 99,
-        99: 99,
-        139: 139,
-        179: 269,
-        199: 199,
-        10: 10,
-        269: 269,
-        299: 299,
-        333: 499,
-        369: 369,
-        399: 399,
-        499: 499,
-        699: 699,
-    }
-    return mapping.get(amount)
-
-
 def convert_crypto_to_rub(currency: str, amount: str) -> Optional[int]:
     mapping = {
         'TON': {
@@ -432,9 +413,7 @@ async def analytics_export(message: Message):
                 )
                 for uid, amt in (await session.execute(stmt_stars_new)).all():
                     if uid in set_new_total:
-                        rub = convert_stars_to_rub(amt)
-                        if rub:
-                            new_payments_amounts.append((uid, rub))
+                        new_payments_amounts.append((uid, amt))
 
                 # Крипто
                 stmt_crypto_new = select(
@@ -525,9 +504,7 @@ async def analytics_export(message: Message):
                     PaymentsStars.status == 'confirmed'
                 )
                 for amount, is_gift in (await session.execute(stmt_stars_all)).all():
-                    rub = convert_stars_to_rub(amount)
-                    if rub:
-                        all_payments.append((rub, is_gift))
+                    all_payments.append((amount, is_gift))
 
                 # Крипто
                 stmt_crypto_all = select(

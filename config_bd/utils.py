@@ -25,6 +25,7 @@ def _cryptobot_payment_rub_equiv(currency: Optional[str], amount_str: str) -> in
         return 0
     return _CRYPTO_TARIFF_RUB.get(currency, {}).get(amount_str, 0)
 
+
 # Пакетная обработка для /stat: меньше 999 — лимит переменных SQLite в одном запросе.
 _STAT_IN_CHUNK = 900
 
@@ -664,8 +665,11 @@ class AsyncSQL:
         """
         Возвращает статистику по пользователям, у которых Ref == arg,
         если таких нет – по пользователям с stamp == arg.
-        Возвращает (total, with_sub, with_tarif, total_payments, source)
-        или (None, None, None, None, None) если нет совпадений.
+        total_payments — сумма в ₽ по всем подтверждённым каналам: Payments, карты, Platega crypto,
+        WATA СБП/карта, Stars (сумма amount 1:1), Cryptobot (по таблице тарифов).
+        Без уполовинивания итога.
+        Возвращает (total, with_sub, with_tarif, with_tarif_not_blocked, total_payments, source)
+        или (None, None, None, None, None, None) если нет совпадений.
         """
         # 1. Ищем по Ref
         users = await self.select_user_by_parameter('ref', arg)
@@ -722,7 +726,30 @@ class AsyncSQL:
                 )
                 total_payments += (await session.execute(stmt_wata_card)).scalar() or 0
 
-        total_payments //= 2
+                stmt_cards = select(func.coalesce(func.sum(PaymentsCards.amount), 0)).where(
+                    PaymentsCards.user_id.in_(chunk),
+                    PaymentsCards.status == 'confirmed',
+                )
+                total_payments += (await session.execute(stmt_cards)).scalar() or 0
+
+                stmt_platega = select(func.coalesce(func.sum(PaymentsPlategaCrypto.amount), 0)).where(
+                    PaymentsPlategaCrypto.user_id.in_(chunk),
+                    PaymentsPlategaCrypto.status == 'confirmed',
+                )
+                total_payments += (await session.execute(stmt_platega)).scalar() or 0
+
+                stmt_stars = select(func.coalesce(func.sum(PaymentsStars.amount), 0)).where(
+                    PaymentsStars.user_id.in_(chunk),
+                    PaymentsStars.status == 'confirmed',
+                )
+                total_payments += (await session.execute(stmt_stars)).scalar() or 0
+
+                stmt_cryptobot = select(PaymentsCryptobot.amount, PaymentsCryptobot.currency).where(
+                    PaymentsCryptobot.user_id.in_(chunk),
+                    PaymentsCryptobot.status == 'paid',
+                )
+                for amt, cur in (await session.execute(stmt_cryptobot)).all():
+                    total_payments += _cryptobot_payment_rub_equiv(cur, str(amt))
 
         return total, with_sub, with_tarif, with_tarif_not_blocked, total_payments, source
 
