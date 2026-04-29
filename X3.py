@@ -136,7 +136,7 @@ class X3:
                 trafficLimitStrategy = "NO_RESET"
                 trafficLimitBytes = 0
                 hwidDeviceLimit = 5 if hwid_device_limit is None else int(hwid_device_limit)
-            desc = 'ВПН для своих'
+            desc = 'VPN for friends'
             data = {
                 "username": user_id_str,
                 "status": "ACTIVE",
