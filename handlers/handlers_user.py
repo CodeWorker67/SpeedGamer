@@ -3,6 +3,7 @@ import requests
 
 from bot import sql, x3, bot
 from config import CHANEL_ID, ADMIN_IDS, BOT_URL
+from lead_tracker import post_user_registered, post_user_trial, tracker_source_from_ref_and_stamp
 from friends_vpn import (
     is_friends_only_locked,
     omit_new_user_db_on_plain_start,
@@ -133,6 +134,13 @@ async def process_start_command(message: Message, command: Command):
             inserted = await sql.add_user(message.from_user.id, False, False, ref=ref_login, stamp=stamp)
             if inserted:
                 logger.info(f'Юзер {message.from_user.id} - {message.from_user.username} добавлен в БД')
+                src = tracker_source_from_ref_and_stamp(ref_login, stamp)
+                await post_user_registered(
+                    message.from_user.id,
+                    message.from_user.username,
+                    message.from_user.full_name,
+                    src,
+                )
             if ttclid:
                 await sql.update_ttclid(message.from_user.id, ttclid)
                 logger.info(f'Юзеру {message.from_user.id} - {message.from_user.username} присвоен ttclid')
@@ -333,6 +341,7 @@ async def trial_gift_broadcast_callback(callback: CallbackQuery):
             connect_vpn="🔗 Подключить VPN",
         ),
     )
+    await post_user_trial(uid)
 
 
 @router.callback_query(F.data == "info")
