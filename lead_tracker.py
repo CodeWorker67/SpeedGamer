@@ -20,7 +20,10 @@ from logging_config import logger
 
 # Platega (sbp/card/crypto) + Cryptobot + WATA + Stars; сумма в payload — в рублях (кроме stars → конвертация).
 _TRACKED_PAYMENT_METHODS = frozenset(
-    {"stars", "cryptobot", "wata_sbp", "wata_card", "sbp", "card", "crypto"}
+    {
+        "stars", "cryptobot", "wata_sbp", "wata_card", "sbp", "card", "crypto",
+        "fk_sbp", "fk_card", "fksbp",
+    }
 )
 
 

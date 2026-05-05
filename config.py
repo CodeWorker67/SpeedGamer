@@ -27,6 +27,12 @@ TRUE_SUB_LINK: Optional[str] = os.environ.get("TRUE_SUB_LINK")
 MIRROR_SUB_LINK: Optional[str] = os.environ.get("MIRROR_SUB_LINK")
 SHORT_UUID_SECRET: Optional[str] = os.environ.get("SHORT_UUID_SECRET")
 
+API_FREEKASSA: Optional[str] = (os.environ.get("API_FREEKASSA") or "").strip() or None
+SHOP_ID_FREEKASSA: Optional[int] = (
+    int(os.environ["SHOP_ID_FREEKASSA"]) if os.environ.get("SHOP_ID_FREEKASSA") else None
+)
+FREEKASSA_SERVER_IP: str = os.environ.get("FREEKASSA_SERVER_IP", "72.56.14.94")
+
 # Lead Tracker (POST /users/, /users/trial, /users/connected, /payments/)
 LEAD_TRACKER_BASE: Optional[str] = (os.environ.get("LEAD_TRACKER_BASE") or "").strip() or None
 LEAD_TRACKER_API_KEY: Optional[str] = (os.environ.get("LEAD_TRACKER_API_KEY") or "").strip() or None
