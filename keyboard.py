@@ -386,16 +386,19 @@ def keyboard_payment_cancel():
     return keyboard
 
 
-def keyboard_payment_method(tarif):
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⚡ СБП",
-                    callback_data=f"wata_sbp_{tarif}",
-                    style=STYLE_SUCCESS,
-                )
-            ],
+def _payment_rows_without_trial_card(tarif: str) -> list[list[InlineKeyboardButton]]:
+    """Строки клавиатуры способов оплаты; для триала (r_3) без оплаты картой."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="⚡ СБП",
+                callback_data=f"wata_sbp_{tarif}",
+                style=STYLE_SUCCESS,
+            )
+        ],
+    ]
+    if tarif != "r_3":
+        rows.append(
             [
                 InlineKeyboardButton(
                     text="💳 Карта РФ",
@@ -403,6 +406,9 @@ def keyboard_payment_method(tarif):
                     style=STYLE_PRIMARY,
                 )
             ],
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="⭐️ Telegram Stars",
@@ -417,46 +423,19 @@ def keyboard_payment_method(tarif):
                     style=STYLE_PRIMARY,
                 )
             ],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")],
         ]
     )
-    return keyboard
+    return rows
+
+
+def keyboard_payment_method(tarif):
+    rows = _payment_rows_without_trial_card(tarif)
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def keyboard_payment_method_stock(tarif):
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⚡ СБП",
-                    callback_data=f"wata_sbp_{tarif}",
-                    style=STYLE_SUCCESS,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 Карта РФ",
-                    callback_data=f"wata_card_{tarif}",
-                    style=STYLE_PRIMARY,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⭐️ Telegram Stars",
-                    callback_data=f"stars_{tarif}",
-                    style=STYLE_PRIMARY,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💎 Crypto bot",
-                    callback_data=f"crypto_{tarif}",
-                    style=STYLE_PRIMARY,
-                )
-            ],
-        ]
-    )
-    return keyboard
+    return InlineKeyboardMarkup(inline_keyboard=_payment_rows_without_trial_card(tarif))
 
 
 def keyboard_payment_sbp(text, pay_url):

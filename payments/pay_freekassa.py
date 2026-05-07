@@ -279,6 +279,13 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
         duration_plain = duration
     days_payload = str(tariff_days_for_x3(duration_plain))
 
+    if ui_kind == "card" and not gift_flag and duration_plain == "r_3":
+        await callback.message.answer(
+            "Для пробного периода оплата картой не поддерживается. Выберите СБП, Stars или Crypto bot.",
+            reply_markup=create_kb(1, back_to_main=BTN_BACK),
+        )
+        return
+
     if gift_flag:
         payment_info = await pay_for_gift(
             val=str(rub_amount),
