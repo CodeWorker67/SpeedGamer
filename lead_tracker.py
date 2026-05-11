@@ -1,5 +1,5 @@
 """
-Постбеки в Lead Tracker (FastAPI на VPS): POST /users/, /users/trial, /users/connected, /payments/.
+Постбеки в Lead Tracker (FastAPI на VPS): POST /users/, /users/connected, /payments/.
 Включается, если заданы LEAD_TRACKER_BASE и LEAD_TRACKER_API_KEY.
 """
 from __future__ import annotations
@@ -176,16 +176,16 @@ async def post_user_registered(
     await _post_json("/users/", body, kind="register")
 
 
-async def post_user_trial(telegram_user_id: int) -> None:
-    if not is_enabled():
-        logger.debug("Lead Tracker [trial]: пропуск, трекер не настроен")
-        return
-    await sync_user_from_db(telegram_user_id)
-    bot_id, _ = await _bot_meta()
-    if bot_id is None:
-        logger.warning("Lead Tracker [trial]: пропуск после sync, bot_id недоступен")
-        return
-    await _post_json("/users/trial", {"user_id": telegram_user_id, "bot_id": bot_id}, kind="trial")
+# async def post_user_trial(telegram_user_id: int) -> None:
+#     if not is_enabled():
+#         logger.debug("Lead Tracker [trial]: пропуск, трекер не настроен")
+#         return
+#     await sync_user_from_db(telegram_user_id)
+#     bot_id, _ = await _bot_meta()
+#     if bot_id is None:
+#         logger.warning("Lead Tracker [trial]: пропуск после sync, bot_id недоступен")
+#         return
+#     await _post_json("/users/trial", {"user_id": telegram_user_id, "bot_id": bot_id}, kind="trial")
 
 
 async def post_user_connected(telegram_user_id: int) -> None:

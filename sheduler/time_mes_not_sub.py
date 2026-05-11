@@ -2,7 +2,6 @@ from datetime import datetime
 
 from bot import bot, sql
 from config import CHECKER_ID
-from friends_vpn import is_friends_only_locked
 from keyboard import create_kb, STYLE_PRIMARY, STYLE_SUCCESS
 from lexicon import lexicon
 from logging_config import logger
@@ -34,8 +33,6 @@ async def send_push_cron(debug: bool = False):
                 user_data = await sql.get_user(user_id)
                 if not user_data:
                     continue
-                if is_friends_only_locked(user_data):
-                    continue
 
                 create_time = user_data[6]
                 if not create_time:
@@ -59,16 +56,16 @@ async def send_push_cron(debug: bool = False):
                             keyboard_broadcast_mes = create_kb(
                                 1,
                                 styles={
-                                    'r_3': STYLE_SUCCESS,
+                                    'buy_vpn': STYLE_SUCCESS,
                                     'video_faq': STYLE_PRIMARY,
                                 },
-                                r_3='🔥 10 ₽ на 3 дня',
+                                buy_vpn='🛒 Купить подписку',
                                 video_faq='🎥 Видеоинструкция',
                             )
                             keyboard_broadcast_video = create_kb(
                                 1,
-                                styles={'r_3': STYLE_SUCCESS},
-                                r_3='🔥 10 ₽ на 3 дня',
+                                styles={'buy_vpn': STYLE_SUCCESS},
+                                buy_vpn='🛒 Купить подписку',
                             )
                             if video_flag:
                                 await bot.send_video(

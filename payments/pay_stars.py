@@ -1,6 +1,5 @@
 from bot import bot, sql
 from config import ADMIN_IDS
-from friends_vpn import pro_hwid_device_limit_for_user_row
 from keyboard import keyboard_payment_stars
 from logging_config import logger
 
@@ -12,6 +11,8 @@ from tariff_resolve import tariff_days_for_x3
 
 
 router: Router = Router()
+
+PRO_HWID_DEVICE_LIMIT = 5
 
 
 def get_stars_amount(currency: str, duration: str) -> float:
@@ -55,7 +56,7 @@ async def process_payment_stars(callback: CallbackQuery):
         description = lexicon['payment_link_white']
     else:
         ud_pay = await sql.get_user(int(user_id))
-        description = payment_link_pro_for_hwid(pro_hwid_device_limit_for_user_row(ud_pay))
+        description = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
     await bot.send_invoice(
         callback.from_user.id,
         title=title,

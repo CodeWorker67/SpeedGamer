@@ -9,13 +9,14 @@ from aiogram.types import CallbackQuery
 
 from bot import sql
 from config import API_FREEKASSA, SHOP_ID_FREEKASSA, FREEKASSA_SERVER_IP, ADMIN_IDS
-from friends_vpn import pro_hwid_device_limit_for_user_row
 from keyboard import keyboard_payment_sbp, create_kb, BTN_BACK
 from lexicon import lexicon, payment_link_pro_for_hwid
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
 from logging_config import logger
 
 router = Router()
+
+PRO_HWID_DEVICE_LIMIT = 5
 
 FK_API_BASE = "https://api.fk.life/v1"
 FK_PAYMENT_SBP_QR = 44
@@ -311,7 +312,7 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
     if payment_info["status"] == "pending":
         try:
             ud_pay = await sql.get_user(int(user_id))
-            lim_pay = pro_hwid_device_limit_for_user_row(ud_pay)
+            lim_pay = PRO_HWID_DEVICE_LIMIT
             if white_flag:
                 text = lexicon["payment_link_white"]
             else:

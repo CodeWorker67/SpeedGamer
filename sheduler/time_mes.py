@@ -9,8 +9,7 @@ from aiogram import Bot
 
 from bot import sql, x3
 from config import CHECKER_ID
-from friends_vpn import is_friends_only_locked, uses_new_friend_tariffs
-from keyboard import keyboard_tariff, keyboard_tariff_trial, create_kb, STYLE_PRIMARY
+from keyboard import keyboard_tariff, create_kb, STYLE_PRIMARY
 from lexicon import lexicon
 from logging_config import logger
 
@@ -121,7 +120,9 @@ async def send_message_cron(bot: Bot):
     ids_week: List[int] = []
     ids_second_chance: List[int] = []
 
-    for user_id, end_raw, is_pay_flag, ttclid, field_str_1_raw in candidate_rows:
+    keyboard = keyboard_tariff()
+
+    for user_id, end_raw, _is_pay_flag, ttclid, field_str_1_raw in candidate_rows:
         try:
             end = _normalize_end_utc(end_raw)
             if end is None:
@@ -129,15 +130,6 @@ async def send_message_cron(bot: Bot):
 
             end_key = _end_key(end)
             sent = _load_state(field_str_1_raw, end_key)
-
-            user_row = await sql.get_user(user_id)
-            if user_row and is_friends_only_locked(user_row):
-                continue
-            fr = bool(user_row and uses_new_friend_tariffs(user_row))
-            if is_pay_flag:
-                keyboard = keyboard_tariff(friends=fr)
-            else:
-                keyboard = keyboard_tariff_trial(friends=fr)
 
             if now < end:
                 t7 = end - timedelta(days=7)
@@ -271,7 +263,7 @@ async def send_message_cron(bot: Bot):
 за 1 день: {sent_count_1}
 за 1 час: {sent_count_0}
 после окончания каждые 3 дня: {sent_count_week}
-повторный триал: {sent_count_second_chance}
+повторный шанс (second_chance): {sent_count_second_chance}
 
 Не получилось: {failed_count}
 '''

@@ -9,13 +9,14 @@ from aiogram.types import CallbackQuery
 
 from bot import sql
 from config import ADMIN_IDS, BOT_URL, WATA_API_BASE, WATA_API_CARD_KEY, WATA_API_SBP_KEY
-from friends_vpn import pro_hwid_device_limit_for_user_row
 from keyboard import keyboard_payment_sbp, create_kb
 from lexicon import lexicon, payment_link_pro_for_hwid
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
 from logging_config import logger
 
 router = Router()
+
+PRO_HWID_DEVICE_LIMIT = 5
 
 WataKind = Literal["sbp", "card"]
 
@@ -337,7 +338,7 @@ async def process_payment_wata_sbp(callback: CallbackQuery):
     if payment_info["status"] == "pending":
         try:
             ud_pay = await sql.get_user(int(user_id))
-            lim_pay = pro_hwid_device_limit_for_user_row(ud_pay)
+            lim_pay = PRO_HWID_DEVICE_LIMIT
             if white_flag:
                 text = lexicon["payment_link_white"]
             else:
@@ -403,7 +404,7 @@ async def process_payment_wata_card(callback: CallbackQuery):
     if payment_info["status"] == "pending":
         try:
             ud_pay = await sql.get_user(int(user_id))
-            lim_pay = pro_hwid_device_limit_for_user_row(ud_pay)
+            lim_pay = PRO_HWID_DEVICE_LIMIT
             if white_flag:
                 text = lexicon["payment_link_white"]
             else:

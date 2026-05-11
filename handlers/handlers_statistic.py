@@ -15,7 +15,7 @@ from sqlalchemy import select, func
 
 from bot import sql
 from config import ADMIN_IDS, CHECKER_ID
-from lexicon import TRIAL_TARIFF_PAYMENT_RUB
+from lexicon import PAYMENT_MINOR_THRESHOLD_RUB
 from logging_config import logger
 from config_bd.models import AsyncSessionLocal, Users, Payments, PaymentsStars, PaymentsCryptobot, PaymentsCards, \
     PaymentsPlategaCrypto, PaymentsWataSBP, PaymentsWataCard, PaymentsFkSBP
@@ -318,12 +318,12 @@ async def analytics_export(message: Message):
                     if user.is_connect:
                         daily_stats[create_day]['connect'] += 1
 
-                # --- Множество плативших полный тариф (не только пробный 10 ₽) ---
-                trial_amt = TRIAL_TARIFF_PAYMENT_RUB
+                # --- Множество плативших сверх порога мелкой суммы (10 ₽) ---
+                minor_amt = PAYMENT_MINOR_THRESHOLD_RUB
                 stmt_paid_main = select(Payments.user_id).distinct().where(
                     Payments.status == 'confirmed',
                     Payments.is_gift == False,
-                    Payments.amount > trial_amt,
+                    Payments.amount > minor_amt,
                     Payments.amount != 1,
                 )
                 paid_main = {row[0] for row in (await session.execute(stmt_paid_main)).all()}
@@ -331,7 +331,7 @@ async def analytics_export(message: Message):
                 stmt_paid_stars = select(PaymentsStars.user_id).distinct().where(
                     PaymentsStars.status == 'confirmed',
                     PaymentsStars.is_gift == False,
-                    PaymentsStars.amount > trial_amt,
+                    PaymentsStars.amount > minor_amt,
                 )
                 paid_stars = {row[0] for row in (await session.execute(stmt_paid_stars)).all()}
 
@@ -347,13 +347,13 @@ async def analytics_export(message: Message):
                 paid_crypto = set()
                 for uid, amt, cur in (await session.execute(stmt_paid_crypto)).all():
                     rub = convert_crypto_to_rub(cur, str(amt))
-                    if rub and rub > trial_amt:
+                    if rub and rub > minor_amt:
                         paid_crypto.add(uid)
 
                 stmt_paid_cards = select(PaymentsCards.user_id).distinct().where(
                     PaymentsCards.status == 'confirmed',
                     PaymentsCards.is_gift == False,
-                    PaymentsCards.amount > trial_amt,
+                    PaymentsCards.amount > minor_amt,
                     PaymentsCards.amount != 1,
                 )
                 paid_cards = {row[0] for row in (await session.execute(stmt_paid_cards)).all()}
@@ -361,7 +361,7 @@ async def analytics_export(message: Message):
                 stmt_paid_platega_crypto = select(PaymentsPlategaCrypto.user_id).distinct().where(
                     PaymentsPlategaCrypto.status == 'confirmed',
                     PaymentsPlategaCrypto.is_gift == False,
-                    PaymentsPlategaCrypto.amount > trial_amt,
+                    PaymentsPlategaCrypto.amount > minor_amt,
                     PaymentsPlategaCrypto.amount != 1,
                 )
                 paid_platega_crypto = {row[0] for row in (await session.execute(stmt_paid_platega_crypto)).all()}
@@ -369,7 +369,7 @@ async def analytics_export(message: Message):
                 stmt_paid_wata_sbp = select(PaymentsWataSBP.user_id).distinct().where(
                     PaymentsWataSBP.status == 'confirmed',
                     PaymentsWataSBP.is_gift == False,
-                    PaymentsWataSBP.amount > trial_amt,
+                    PaymentsWataSBP.amount > minor_amt,
                     PaymentsWataSBP.amount != 1,
                 )
                 paid_wata_sbp = {row[0] for row in (await session.execute(stmt_paid_wata_sbp)).all()}
@@ -377,7 +377,7 @@ async def analytics_export(message: Message):
                 stmt_paid_wata_card = select(PaymentsWataCard.user_id).distinct().where(
                     PaymentsWataCard.status == 'confirmed',
                     PaymentsWataCard.is_gift == False,
-                    PaymentsWataCard.amount > trial_amt,
+                    PaymentsWataCard.amount > minor_amt,
                     PaymentsWataCard.amount != 1,
                 )
                 paid_wata_card = {row[0] for row in (await session.execute(stmt_paid_wata_card)).all()}
@@ -385,7 +385,7 @@ async def analytics_export(message: Message):
                 stmt_paid_fk_sbp = select(PaymentsFkSBP.user_id).distinct().where(
                     PaymentsFkSBP.status == 'confirmed',
                     PaymentsFkSBP.is_gift == False,
-                    PaymentsFkSBP.amount > trial_amt,
+                    PaymentsFkSBP.amount > minor_amt,
                     PaymentsFkSBP.amount != 1,
                 )
                 paid_fk_sbp = {row[0] for row in (await session.execute(stmt_paid_fk_sbp)).all()}

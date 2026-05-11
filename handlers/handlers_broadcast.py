@@ -64,7 +64,6 @@ SCOPE_LABEL = {
 
 # callback_data и подписи как в keyboard.py (главное меню и тарифы)
 CUSTOM_PRESETS = [
-    ("r_3", "🔥 10 ₽ на 3 дня", STYLE_SUCCESS),
     ("free_vpn", "🔥 Попробовать бесплатно (legacy)", STYLE_SUCCESS),
     ("buy_vpn", "🛒 Купить подписку", STYLE_SUCCESS),
     ("connect_vpn", "🔗 Подключить ВПН", STYLE_PRIMARY),

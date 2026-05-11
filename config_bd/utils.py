@@ -8,7 +8,7 @@ from typing import Optional, List, Tuple, Dict, Any, Set
 
 from config_bd.models import AsyncSessionLocal, Users, Payments, Gifts, PaymentsCryptobot, PaymentsStars, Online, \
     WhiteCounter, PaymentsCards, PaymentsPlategaCrypto, PaymentsWataSBP, PaymentsWataCard, PaymentsFkSBP
-from lexicon import TRIAL_TARIFF_PAYMENT_RUB
+from lexicon import PAYMENT_MINOR_THRESHOLD_RUB
 from logging_config import logger
 
 _CRYPTO_TARIFF_RUB = {
@@ -57,12 +57,12 @@ class AsyncSQL:
 
     async def user_ids_with_full_tariff_payment(self, user_ids: List[int]) -> Set[int]:
         """
-        Пользователи с подтверждённым не-подарочным платежом дороже пробного (10 ₽ / 10 XTR).
-        Оплата только пробного периода сюда не входит.
+        Пользователи с подтверждённым не-подарочным платежом дороже порога мелкой суммы (10 ₽ / 10 XTR).
+        Платежи только на уровне этого порога сюда не входят.
         """
         if not user_ids:
             return set()
-        trial = TRIAL_TARIFF_PAYMENT_RUB
+        minor_floor = PAYMENT_MINOR_THRESHOLD_RUB
         uniq = list({int(u) for u in user_ids})
         out: Set[int] = set()
         chunks = [uniq[i : i + _STAT_IN_CHUNK] for i in range(0, len(uniq), _STAT_IN_CHUNK)]
@@ -72,7 +72,7 @@ class AsyncSQL:
                     Payments.user_id.in_(chunk),
                     Payments.status == 'confirmed',
                     Payments.is_gift == False,
-                    Payments.amount > trial,
+                    Payments.amount > minor_floor,
                     Payments.amount != 1,
                 )
                 for (uid,) in (await session.execute(stmt_p)).all():
@@ -82,7 +82,7 @@ class AsyncSQL:
                     PaymentsCards.user_id.in_(chunk),
                     PaymentsCards.status == 'confirmed',
                     PaymentsCards.is_gift == False,
-                    PaymentsCards.amount > trial,
+                    PaymentsCards.amount > minor_floor,
                     PaymentsCards.amount != 1,
                 )
                 for (uid,) in (await session.execute(stmt_cards)).all():
@@ -92,7 +92,7 @@ class AsyncSQL:
                     PaymentsPlategaCrypto.user_id.in_(chunk),
                     PaymentsPlategaCrypto.status == 'confirmed',
                     PaymentsPlategaCrypto.is_gift == False,
-                    PaymentsPlategaCrypto.amount > trial,
+                    PaymentsPlategaCrypto.amount > minor_floor,
                     PaymentsPlategaCrypto.amount != 1,
                 )
                 for (uid,) in (await session.execute(stmt_pc)).all():
@@ -102,7 +102,7 @@ class AsyncSQL:
                     PaymentsWataSBP.user_id.in_(chunk),
                     PaymentsWataSBP.status == 'confirmed',
                     PaymentsWataSBP.is_gift == False,
-                    PaymentsWataSBP.amount > trial,
+                    PaymentsWataSBP.amount > minor_floor,
                     PaymentsWataSBP.amount != 1,
                 )
                 for (uid,) in (await session.execute(stmt_ws)).all():
@@ -112,7 +112,7 @@ class AsyncSQL:
                     PaymentsWataCard.user_id.in_(chunk),
                     PaymentsWataCard.status == 'confirmed',
                     PaymentsWataCard.is_gift == False,
-                    PaymentsWataCard.amount > trial,
+                    PaymentsWataCard.amount > minor_floor,
                     PaymentsWataCard.amount != 1,
                 )
                 for (uid,) in (await session.execute(stmt_wc)).all():
@@ -122,7 +122,7 @@ class AsyncSQL:
                     PaymentsFkSBP.user_id.in_(chunk),
                     PaymentsFkSBP.status == 'confirmed',
                     PaymentsFkSBP.is_gift == False,
-                    PaymentsFkSBP.amount > trial,
+                    PaymentsFkSBP.amount > minor_floor,
                     PaymentsFkSBP.amount != 1,
                 )
                 for (uid,) in (await session.execute(stmt_fk)).all():
@@ -132,7 +132,7 @@ class AsyncSQL:
                     PaymentsStars.user_id.in_(chunk),
                     PaymentsStars.status == 'confirmed',
                     PaymentsStars.is_gift == False,
-                    PaymentsStars.amount > trial,
+                    PaymentsStars.amount > minor_floor,
                 )
                 for (uid,) in (await session.execute(stmt_st)).all():
                     out.add(int(uid))
@@ -149,7 +149,7 @@ class AsyncSQL:
                 )
                 for uid, amt, cur in (await session.execute(stmt_cr)).all():
                     rub = _cryptobot_payment_rub_equiv(cur, str(amt))
-                    if rub > trial:
+                    if rub > minor_floor:
                         out.add(int(uid))
         return out
 

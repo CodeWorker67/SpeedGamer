@@ -6,13 +6,14 @@ from aiogram.types import CallbackQuery
 
 from bot import sql
 from config import PLATEGA_API_KEY, PLATEGA_MERCHANT_ID, ADMIN_IDS, BOT_URL
-from friends_vpn import pro_hwid_device_limit_for_user_row
 from keyboard import keyboard_payment_sbp, create_kb
 from lexicon import lexicon, payment_link_pro_for_hwid
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
 from logging_config import logger
 
 router = Router()
+
+PRO_HWID_DEVICE_LIMIT = 5
 
 
 class PlategaPayment:
@@ -229,7 +230,7 @@ async def process_payment_sbp(callback: CallbackQuery):
                 text = lexicon['payment_link_white']
             else:
                 ud_pay = await sql.get_user(int(user_id))
-                text = payment_link_pro_for_hwid(pro_hwid_device_limit_for_user_row(ud_pay))
+                text = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
             if 'gift' in callback.data:
                 text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
             else:
@@ -293,7 +294,7 @@ async def process_payment_card(callback: CallbackQuery):
                 text = lexicon['payment_link_white']
             else:
                 ud_pay = await sql.get_user(int(user_id))
-                text = payment_link_pro_for_hwid(pro_hwid_device_limit_for_user_row(ud_pay))
+                text = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
             if 'gift' in callback.data:
                 text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
             else:

@@ -53,6 +53,8 @@ async def export_database_to_excel(message: Message):
                 'create_user', 'reserve_field', 'subscription_end_date',
                 'white_subscription_end_date', 'last_notification_date',
                 'last_broadcast_status', 'last_broadcast_date', 'stamp', 'ttclid',
+                'subscription_3_end_date', 'subscription_10_end_date',
+                'subscribtion_3', 'subscribtion_10',
             ]
             header_alignment = Alignment(horizontal="center", vertical="center")
             thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
@@ -73,10 +75,12 @@ async def export_database_to_excel(message: Message):
                     user.white_subscription_end_date, user.last_notification_date,
                     user.last_broadcast_status, user.last_broadcast_date,
                     user.stamp, user.ttclid,
+                    user.subscription_3_end_date, user.subscription_10_end_date,
+                    user.subscribtion_3, user.subscribtion_10,
                 ]
                 for col_num, value in enumerate(row_data, 1):
                     # Форматирование дат
-                    if col_num in (9, 10, 13) and value:  # subscription_end_date, white_subscription_end_date, last_broadcast_date
+                    if col_num in (9, 10, 13, 16, 17) and value:  # *_end_date, last_broadcast_date
                         if isinstance(value, datetime):
                             value = value.strftime('%Y-%m-%d %H:%M:%S')
                     elif col_num == 11 and value:  # last_notification_date

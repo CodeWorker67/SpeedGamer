@@ -33,7 +33,7 @@ SHOP_ID_FREEKASSA: Optional[int] = (
 )
 FREEKASSA_SERVER_IP: str = os.environ.get("FREEKASSA_SERVER_IP", "72.56.14.94")
 
-# Lead Tracker (POST /users/, /users/trial, /users/connected, /payments/)
+# Lead Tracker (POST /users/, /users/connected, /payments/)
 LEAD_TRACKER_BASE: Optional[str] = (os.environ.get("LEAD_TRACKER_BASE") or "").strip() or None
 LEAD_TRACKER_API_KEY: Optional[str] = (os.environ.get("LEAD_TRACKER_API_KEY") or "").strip() or None
 LEAD_TRACKER_STAR_RUB_PER_STAR: str = os.environ.get("LEAD_TRACKER_STAR_RUB_PER_STAR", "1.0")

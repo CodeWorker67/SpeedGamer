@@ -65,8 +65,7 @@ def chanel_keyboard():
 def keyboard_start_bonus():
     return create_kb(
         1,
-        styles={"r_3": STYLE_SUCCESS, "buy_vpn": STYLE_SUCCESS},
-        r_3="10 ₽ на 3 дня",
+        styles={"buy_vpn": STYLE_SUCCESS},
         buy_vpn="Купить подписку",
     )
 
@@ -88,86 +87,26 @@ def keyboard_start():
 
 
 _STYLES_TARIFF = {
-    "r_3": STYLE_SUCCESS,
     "r_7": STYLE_PRIMARY,
     "r_30": STYLE_PRIMARY,
     "r_90": STYLE_SUCCESS,
     "r_180": STYLE_SUCCESS,
     "r_120": STYLE_SUCCESS,
     "r_white_30": STYLE_PRIMARY,
-    "r_new_7": STYLE_PRIMARY,
-    "r_new_30": STYLE_PRIMARY,
-    "r_new_90": STYLE_SUCCESS,
-    "r_new_3000": STYLE_SUCCESS,
 }
 
 
-def keyboard_tariff_bonus(*, friends: bool = False):
-    if friends:
-        return create_kb(
-            1,
-            styles=_STYLES_TARIFF,
-            r_3="🔥 10 ₽ на 3 дня",
-            r_new_7="🤌 7 дней - 99 руб",
-            r_new_30="🤝 30 дней - 249 руб",
-            r_new_90="👌 90 дней - 599 руб",
-            r_new_3000="💪 Навсегда - 3490 руб",
-            back_to_main="🔙 Назад",
-        )
-    return create_kb(
-        1,
-        styles=_STYLES_TARIFF,
-        r_3="🔥 10 ₽ на 3 дня",
-        r_7="🤌 7 дней - 99 руб",
-        r_30="🤝 30 дней - 199 руб",
-        r_90="👌 90 дней - 369 руб",
-        r_180="💪 180 дней - 699 руб",
-        # r_white_30="🦾 Включи мобильный - 399 руб",
-        back_to_main="🔙 Назад",
-    )
+def keyboard_tariff_bonus():
+    return keyboard_tariff()
 
 
-def keyboard_tariff(*, friends: bool = False):
-    if friends:
-        return create_kb(
-            1,
-            styles={k: v for k, v in _STYLES_TARIFF.items() if k != "r_3"},
-            r_new_7="🤌 7 дней - 99 руб",
-            r_new_30="🤝 30 дней - 249 руб",
-            r_new_90="👌 90 дней - 599 руб",
-            r_new_3000="💪 Навсегда - 3490 руб",
-            back_to_main="🔙 Назад",
-        )
-    return create_kb(
-        1,
-        styles={k: v for k, v in _STYLES_TARIFF.items() if k != "r_3"},
-        r_7="🤌 7 дней - 99 руб",
-        r_30="🤝 30 дней - 199 руб",
-        r_90="👌 90 дней - 369 руб",
-        r_180="💪 180 дней - 699 руб",
-        # r_white_30="🦾 Включи мобильный - 399 руб",
-        back_to_main="🔙 Назад",
-    )
-
-
-def keyboard_tariff_trial(*, friends: bool = False):
-    if friends:
-        return create_kb(
-            1,
-            styles={k: v for k, v in _STYLES_TARIFF.items() if k != "r_3"},
-            r_new_7="🤌 7 дней - 99 руб",
-            r_new_30="🤝 30 дней - 249 руб",
-            r_new_90="👌 90 дней - 599 руб",
-            r_new_3000="💪 Навсегда - 3490 руб",
-            back_to_main="🔙 Назад",
-        )
+def keyboard_tariff():
     return create_kb(
         1,
         styles=_STYLES_TARIFF,
         r_7="🤌 7 дней - 99 руб",
         r_30="🤝 30 дней - 199 руб",
         r_90="👌 90 дней - 369 руб",
-        r_120="🔥 Акция: 120 дней - 369 руб",
         r_180="💪 180 дней - 699 руб",
         # r_white_30="🦾 Включи мобильный - 399 руб",
         back_to_main="🔙 Назад",
@@ -180,24 +119,10 @@ _STYLES_GIFT = {
     "gift_r_90": STYLE_SUCCESS,
     "gift_r_180": STYLE_SUCCESS,
     "gift_r_white_30": STYLE_PRIMARY,
-    "gift_r_new_7": STYLE_PRIMARY,
-    "gift_r_new_30": STYLE_PRIMARY,
-    "gift_r_new_90": STYLE_SUCCESS,
-    "gift_r_new_3000": STYLE_SUCCESS,
 }
 
 
-def keyboard_gift_tariff(*, friends: bool = False):
-    if friends:
-        return create_kb(
-            1,
-            styles=_STYLES_GIFT,
-            gift_r_new_7="🤌 7 дней - 99 руб",
-            gift_r_new_30="🤝 30 дней - 249 руб",
-            gift_r_new_90="👌 90 дней - 599 руб",
-            gift_r_new_3000="💪 Навсегда - 3490 руб",
-            back_to_main="🔙 Назад",
-        )
+def keyboard_gift_tariff():
     return create_kb(
         1,
         styles=_STYLES_GIFT,
@@ -387,8 +312,8 @@ def keyboard_payment_cancel():
 
 
 def _payment_rows_without_trial_card(tarif: str) -> list[list[InlineKeyboardButton]]:
-    """Строки клавиатуры способов оплаты; для триала (r_3) без оплаты картой."""
-    rows: list[list[InlineKeyboardButton]] = [
+    """Строки клавиатуры способов оплаты."""
+    return [
         [
             InlineKeyboardButton(
                 text="⚡ СБП",
@@ -396,36 +321,28 @@ def _payment_rows_without_trial_card(tarif: str) -> list[list[InlineKeyboardButt
                 style=STYLE_SUCCESS,
             )
         ],
-    ]
-    if tarif != "r_3":
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="💳 Карта РФ",
-                    callback_data=f"wata_card_{tarif}",
-                    style=STYLE_PRIMARY,
-                )
-            ],
-        )
-    rows.extend(
         [
-            [
-                InlineKeyboardButton(
-                    text="⭐️ Telegram Stars",
-                    callback_data=f"stars_{tarif}",
-                    style=STYLE_PRIMARY,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💎 Crypto bot",
-                    callback_data=f"crypto_{tarif}",
-                    style=STYLE_PRIMARY,
-                )
-            ],
-        ]
-    )
-    return rows
+            InlineKeyboardButton(
+                text="💳 Карта РФ",
+                callback_data=f"wata_card_{tarif}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⭐️ Telegram Stars",
+                callback_data=f"stars_{tarif}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💎 Crypto bot",
+                callback_data=f"crypto_{tarif}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+    ]
 
 
 def keyboard_payment_method(tarif):

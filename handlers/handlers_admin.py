@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 from bot import sql, x3, bot
 from config import ADMIN_IDS, CHECKER_ID
-from friends_vpn import pro_hwid_device_limit_for_user_row
 from keyboard import create_kb, STYLE_PRIMARY
 from logging_config import logger
 import asyncio
@@ -14,6 +13,8 @@ from aiogram.filters import Command
 from sheduler.check_connect import check_connect
 
 router = Router()
+
+PRO_HWID_DEVICE_LIMIT = 5
 
 
 @router.message(F.video, F.from_user.id.in_(ADMIN_IDS))
@@ -124,7 +125,7 @@ async def set_subscription_date(message: Message):
         username = str(user_id) + ('_white' if is_white else '')
 
         # Устанавливаем дату в панели
-        hw_lim = pro_hwid_device_limit_for_user_row(user_data)
+        hw_lim = PRO_HWID_DEVICE_LIMIT
         success, actual_date = await x3.set_expiration_date(username, target_date, user_id, hwid_device_limit=hw_lim)
 
         if not success or actual_date is None:
@@ -333,7 +334,7 @@ async def sync_panel(message: Message):
         else:
             user_id_str = str(user_id)
             ud_sync = await sql.get_user(user_id)
-            hw_lim = pro_hwid_device_limit_for_user_row(ud_sync)
+            hw_lim = PRO_HWID_DEVICE_LIMIT
             result = await x3.addClient(5, user_id_str, user_id, hwid_device_limit=hw_lim)
             if result:
                 added_to_panel += 1
