@@ -10,13 +10,11 @@ from aiogram.types import CallbackQuery
 from bot import sql
 from config import API_FREEKASSA, SHOP_ID_FREEKASSA, FREEKASSA_SERVER_IP, ADMIN_IDS
 from keyboard import keyboard_payment_sbp, create_kb, BTN_BACK
-from lexicon import lexicon, payment_link_pro_for_hwid
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
+from lexicon import lexicon, payment_tariff_summary_pro
+from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
 router = Router()
-
-PRO_HWID_DEVICE_LIMIT = 5
 
 FK_API_BASE = "https://api.fk.life/v1"
 FK_PAYMENT_SBP_QR = 44
@@ -151,6 +149,7 @@ async def pay(
     user_id: str,
     duration: str,
     white: bool,
+    device: int,
     ui_kind: UiKind,
 ) -> Dict[str, Any]:
     if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
@@ -160,7 +159,8 @@ async def pay(
     pm = _payload_method(ui_kind)
     amount_rub = _fk_amount_rub(val, ui_kind)
     payload = (
-        f"user_id:{user_id},duration:{duration},white:{white},gift:False,method:{pm},amount:{amount_rub}"
+        f"user_id:{user_id},duration:{duration},white:{white},gift:False,"
+        f"method:{pm},amount:{amount_rub},device:{device}"
     )
     fk = FreekassaPayment(API_FREEKASSA, SHOP_ID_FREEKASSA)
     nonce = await sql.alloc_fk_api_nonce()
@@ -204,6 +204,7 @@ async def pay_for_gift(
     user_id: str,
     duration: str,
     white: bool,
+    device: int,
     ui_kind: UiKind,
 ) -> Dict[str, Any]:
     if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
@@ -213,7 +214,8 @@ async def pay_for_gift(
     pm = _payload_method(ui_kind)
     amount_rub = _fk_amount_rub(val, ui_kind)
     payload = (
-        f"user_id:{user_id},duration:{duration},white:{white},gift:True,method:{pm},amount:{amount_rub}"
+        f"user_id:{user_id},duration:{duration},white:{white},gift:True,"
+        f"method:{pm},amount:{amount_rub},device:{device}"
     )
     fk = FreekassaPayment(API_FREEKASSA, SHOP_ID_FREEKASSA)
     nonce = await sql.alloc_fk_api_nonce()
@@ -279,6 +281,7 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
     else:
         duration_plain = duration
     days_payload = str(tariff_days_for_x3(duration_plain))
+    device_n = device_from_tariff_key(duration_plain)
 
     if ui_kind == "card" and not gift_flag and duration_plain == "r_3":
         await callback.message.answer(
@@ -294,6 +297,7 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
             user_id=user_id,
             duration=days_payload,
             white=white_flag,
+            device=device_n,
             ui_kind=ui_kind,
         )
     else:
@@ -303,6 +307,7 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
             user_id=user_id,
             duration=days_payload,
             white=white_flag,
+            device=device_n,
             ui_kind=ui_kind,
         )
 
@@ -311,12 +316,10 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
 
     if payment_info["status"] == "pending":
         try:
-            ud_pay = await sql.get_user(int(user_id))
-            lim_pay = PRO_HWID_DEVICE_LIMIT
             if white_flag:
                 text = lexicon["payment_link_white"]
             else:
-                text = payment_link_pro_for_hwid(lim_pay)
+                text = payment_tariff_summary_pro(desc_key)
             if gift_flag:
                 text += "\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:"
             else:

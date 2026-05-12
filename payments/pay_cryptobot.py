@@ -6,13 +6,11 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQu
 from bot import sql
 from config import CRYPTOBOT_API_TOKEN, ADMIN_IDS, BOT_URL
 from keyboard import create_kb, STYLE_PRIMARY
-from lexicon import lexicon, payment_link_pro_for_hwid
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
+from lexicon import lexicon, payment_tariff_summary_pro
+from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
 router: Router = Router()
-
-PRO_HWID_DEVICE_LIMIT = 5
 
 
 class CryptoBotPayment:
@@ -90,15 +88,17 @@ class CryptoBotPayment:
 
 async def create_cryptobot_payment(rub_amount: int, description: str,
                                    user_id: int, duration: str, white: bool,
-                                   is_gift: bool) -> Dict:
+                                   is_gift: bool, device: int) -> Dict:
     """
     Создание платежа через Cryptobot с суммой в рублях.
     Пользователь сам выбирает криптовалюту внутри Cryptobot.
     """
     cryptobot = CryptoBotPayment(CRYPTOBOT_API_TOKEN)
 
-    payload = (f"user_id:{user_id},duration:{duration},white:{white},"
-               f"gift:{is_gift},method:cryptobot,amount:{rub_amount}")
+    payload = (
+        f"user_id:{user_id},duration:{duration},white:{white},"
+        f"gift:{is_gift},method:cryptobot,amount:{rub_amount},device:{device}"
+    )
 
     result = await cryptobot.create_invoice(
         fiat_amount=float(rub_amount),
@@ -153,6 +153,7 @@ async def process_payment_crypto(callback: CallbackQuery):
         rub_amount = 1
 
     days_payload = str(tariff_days_for_x3(duration_plain))
+    device_n = device_from_tariff_key(duration_plain)
 
     if gift_flag:
         description = f"Подписка в подарок {des_text}"
@@ -165,15 +166,15 @@ async def process_payment_crypto(callback: CallbackQuery):
         user_id=user_id,
         duration=days_payload,
         white=white_flag,
-        is_gift=gift_flag
+        is_gift=gift_flag,
+        device=device_n,
     )
 
     if result['status'] == 'pending':
         if white_flag:
             text = lexicon['payment_link_white']
         else:
-            ud_pay = await sql.get_user(user_id)
-            text = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
+            text = payment_tariff_summary_pro(duration_key)
         if gift_flag:
             text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
         else:

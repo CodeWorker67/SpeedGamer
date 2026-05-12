@@ -5,6 +5,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CHANEL_URL, BOT_URL
+from lexicon import dct_desc
 
 BTN_BACK = "🔙 Назад"
 
@@ -104,11 +105,11 @@ def keyboard_tariff():
     return create_kb(
         1,
         styles=_STYLES_TARIFF,
-        r_7="🤌 7 дней - 99 руб",
-        r_30="🤝 30 дней - 199 руб",
-        r_90="👌 90 дней - 369 руб",
-        r_180="💪 180 дней - 699 руб",
-        # r_white_30="🦾 Включи мобильный - 399 руб",
+        r_7="🤌 7 дней - 99 ₽",
+        r_30="🤝 30 дней - 199 ₽",
+        r_90="👌 90 дней - 369 ₽",
+        r_180="💪 180 дней - 699 ₽",
+        # r_white_30="🦾 Включи мобильный - 399 ₽",
         back_to_main="🔙 Назад",
     )
 
@@ -126,33 +127,95 @@ def keyboard_gift_tariff():
     return create_kb(
         1,
         styles=_STYLES_GIFT,
-        gift_r_7="🤌 7 дней - 99 руб",
-        gift_r_30="🤝 30 дней - 199 руб",
-        gift_r_90="👌 90 дней - 369 руб",
-        gift_r_180="💪 180 дней - 699 руб",
-        # gift_r_white_30="🦾 Включи мобильный - 399 руб",
+        gift_r_7="🤌 7 дней - 99 ₽",
+        gift_r_30="🤝 30 дней - 199 ₽",
+        gift_r_90="👌 90 дней - 369 ₽",
+        gift_r_180="💪 180 дней - 699 ₽",
+        # gift_r_white_30="🦾 Включи мобильный - 399 ₽",
         back_to_main="🔙 Назад",
     )
 
 
-def keyboard_subscription(sub_url, sub_url_white):
+def keyboard_buy_device_tier():
+    return create_kb(
+        1,
+        styles={
+            "buy_tier_3": STYLE_PRIMARY,
+            "buy_tier_5": STYLE_PRIMARY,
+            "buy_tier_10": STYLE_SUCCESS,
+        },
+        buy_tier_3="🔹 Тарифы на 3️⃣ устройства",
+        buy_tier_5="🔸 Тарифы на 5️⃣ устройств",
+        buy_tier_10="🏆 Тарифы на 🔟 устройств",
+        back_to_main=BTN_BACK,
+    )
+
+
+def _styles_buy_duration(devices: int) -> dict[str, str]:
+    st: dict[str, str] = {"back_buy_tier": STYLE_PRIMARY}
+    for months in (1, 3, 6, 12):
+        key = f"r_m{months}_d{devices}"
+        st[key] = STYLE_SUCCESS if months >= 6 else STYLE_PRIMARY
+    return st
+
+
+def keyboard_buy_duration(devices: int) -> InlineKeyboardMarkup:
+    """Срок подписки после выбора числа устройств (callback вида r_m1_d3)."""
+    kwargs: dict[str, str] = {}
+    for months in (1, 3, 6, 12):
+        ck = f"r_m{months}_d{devices}"
+        dk = f"m{months}_d{devices}"
+        kwargs[ck] = dct_desc[dk]
+    kwargs["back_buy_tier"] = BTN_BACK
+    return create_kb(1, styles=_styles_buy_duration(devices), **kwargs)
+
+
+def keyboard_gift_device_tier():
+    return create_kb(
+        1,
+        styles={
+            "gift_tier_3": STYLE_PRIMARY,
+            "gift_tier_5": STYLE_PRIMARY,
+            "gift_tier_10": STYLE_SUCCESS,
+        },
+        gift_tier_3="🔹 Тарифы на 3️⃣ устройства",
+        gift_tier_5="🔸 Тарифы на 5️⃣ устройств",
+        gift_tier_10="🏆 Тарифы на 🔟 устройств",
+        back_to_main=BTN_BACK,
+    )
+
+
+def _styles_gift_duration(devices: int) -> dict[str, str]:
+    st: dict[str, str] = {"gift_back_tier": STYLE_PRIMARY}
+    for months in (1, 3, 6, 12):
+        key = f"gift_r_m{months}_d{devices}"
+        st[key] = STYLE_SUCCESS if months >= 6 else STYLE_PRIMARY
+    return st
+
+
+def keyboard_gift_duration(devices: int) -> InlineKeyboardMarkup:
+    kwargs: dict[str, str] = {}
+    for months in (1, 3, 6, 12):
+        ck = f"gift_r_m{months}_d{devices}"
+        dk = f"m{months}_d{devices}"
+        kwargs[ck] = dct_desc[dk]
+    kwargs["gift_back_tier"] = BTN_BACK
+    return create_kb(1, styles=_styles_gift_duration(devices), **kwargs)
+
+
+def keyboard_subscription(links: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """
+    links: (текст кнопки, https-ссылка на подписку). Только по активным слотам из панели.
+    """
     buttons = []
-    if sub_url:
+    for text, url in links:
+        if not url:
+            continue
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text="💫 Ваша подписка ВПН",
-                    url=sub_url,
-                    style=STYLE_PRIMARY,
-                )
-            ]
-        )
-    if sub_url_white:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text="🦾 Включи мобильную связь",
-                    url=sub_url_white,
+                    text=text[:64],
+                    url=url,
                     style=STYLE_PRIMARY,
                 )
             ]

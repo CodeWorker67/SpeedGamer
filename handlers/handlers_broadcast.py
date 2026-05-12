@@ -70,12 +70,12 @@ CUSTOM_PRESETS = [
     ("ref", "👥 Рефералка", STYLE_PRIMARY),
     ("buy_gift", "🎁 Подарить подписку", STYLE_SUCCESS),
     ("ref_invite", "Пригласить друзей🫶", STYLE_SUCCESS),
-    ("r_7", "🤌 7 дней - 99 руб", STYLE_PRIMARY),
-    ("r_30", "🤝 30 дней - 199 руб", STYLE_PRIMARY),
-    ("r_90", "👌 90 дней - 369 руб", STYLE_SUCCESS),
-    ("r_180", "💪 180 дней - 699 руб", STYLE_SUCCESS),
-    ("r_120", "🔥 Акция: 120 дней - 369 руб", STYLE_SUCCESS),
-    ("r_white_30", "🦾 Включи мобильный - 399 руб", STYLE_PRIMARY),
+    ("r_7", "🤌 7 дней - 99 ₽", STYLE_PRIMARY),
+    ("r_30", "🤝 30 дней - 199 ₽", STYLE_PRIMARY),
+    ("r_90", "👌 90 дней - 369 ₽", STYLE_SUCCESS),
+    ("r_180", "💪 180 дней - 699 ₽", STYLE_SUCCESS),
+    ("r_120", "🔥 Акция: 120 дней - 369 ₽", STYLE_SUCCESS),
+    ("r_white_30", "🦾 Включи мобильный - 399 ₽", STYLE_PRIMARY),
 ]
 
 

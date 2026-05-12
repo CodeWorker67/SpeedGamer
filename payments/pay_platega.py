@@ -7,13 +7,11 @@ from aiogram.types import CallbackQuery
 from bot import sql
 from config import PLATEGA_API_KEY, PLATEGA_MERCHANT_ID, ADMIN_IDS, BOT_URL
 from keyboard import keyboard_payment_sbp, create_kb
-from lexicon import lexicon, payment_link_pro_for_hwid
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
+from lexicon import lexicon, payment_tariff_summary_pro
+from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
 router = Router()
-
-PRO_HWID_DEVICE_LIMIT = 5
 
 
 class PlategaPayment:
@@ -93,7 +91,7 @@ class PlategaPayment:
             raise
 
 
-async def pay(val: str, des: str, user_id: str, duration: str, white: bool, payment_method: int = 2) -> Dict:
+async def pay(val: str, des: str, user_id: str, duration: str, white: bool, device: int, payment_method: int = 2) -> Dict:
     """Создание платежа для совместимости с pay_yoo.py"""
 
     platega = PlategaPayment(PLATEGA_API_KEY, PLATEGA_MERCHANT_ID)
@@ -103,7 +101,10 @@ async def pay(val: str, des: str, user_id: str, duration: str, white: bool, paym
         method = 'card'
     else:
         method = 'crypto'
-    payload = f"user_id:{user_id},duration:{duration},white:{white},gift:False,method:{method},amount:{int(val)}"
+    payload = (
+        f"user_id:{user_id},duration:{duration},white:{white},gift:False,"
+        f"method:{method},amount:{int(val)},device:{device}"
+    )
 
     try:
         result = await platega.create_payment(
@@ -138,7 +139,7 @@ async def pay(val: str, des: str, user_id: str, duration: str, white: bool, paym
         }
 
 
-async def pay_for_gift(val: str, des: str, user_id: str, duration: str, white: bool, payment_method: int = 2) -> Dict:
+async def pay_for_gift(val: str, des: str, user_id: str, duration: str, white: bool, device: int, payment_method: int = 2) -> Dict:
     """Создание платежа для совместимости с pay_yoo.py"""
 
     platega = PlategaPayment(PLATEGA_API_KEY, PLATEGA_MERCHANT_ID)
@@ -148,7 +149,10 @@ async def pay_for_gift(val: str, des: str, user_id: str, duration: str, white: b
         method = 'card'
     else:
         method = 'crypto'
-    payload = f"user_id:{user_id},duration:{duration},white:{white},gift:True,method:{method},amount:{int(val)}"
+    payload = (
+        f"user_id:{user_id},duration:{duration},white:{white},gift:True,"
+        f"method:{method},amount:{int(val)},device:{device}"
+    )
 
     try:
         result = await platega.create_payment(
@@ -204,6 +208,7 @@ async def process_payment_sbp(callback: CallbackQuery):
     else:
         duration_plain = duration
     days_payload = str(tariff_days_for_x3(duration_plain))
+    device_n = device_from_tariff_key(duration_plain)
 
     if gift_flag:
         payment_info = await pay_for_gift(
@@ -212,6 +217,7 @@ async def process_payment_sbp(callback: CallbackQuery):
             user_id=user_id,
             duration=days_payload,
             white=white_flag,
+            device=device_n,
             payment_method=2,  # 2 = СБП QR
         )
     else:
@@ -221,6 +227,7 @@ async def process_payment_sbp(callback: CallbackQuery):
             user_id=user_id,
             duration=days_payload,
             white=white_flag,
+            device=device_n,
             payment_method=2  # 2 = СБП QR
         )
 
@@ -229,8 +236,7 @@ async def process_payment_sbp(callback: CallbackQuery):
             if white_flag:
                 text = lexicon['payment_link_white']
             else:
-                ud_pay = await sql.get_user(int(user_id))
-                text = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
+                text = payment_tariff_summary_pro(desc_key)
             if 'gift' in callback.data:
                 text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
             else:
@@ -268,6 +274,7 @@ async def process_payment_card(callback: CallbackQuery):
     else:
         duration_plain = duration
     days_payload = str(tariff_days_for_x3(duration_plain))
+    device_n = device_from_tariff_key(duration_plain)
 
     if gift_flag:
         payment_info = await pay_for_gift(
@@ -276,6 +283,7 @@ async def process_payment_card(callback: CallbackQuery):
             user_id=user_id,
             duration=days_payload,
             white=white_flag,
+            device=device_n,
             payment_method=11,
         )
     else:
@@ -285,6 +293,7 @@ async def process_payment_card(callback: CallbackQuery):
             user_id=user_id,
             duration=days_payload,
             white=white_flag,
+            device=device_n,
             payment_method=11
         )
 
@@ -293,8 +302,7 @@ async def process_payment_card(callback: CallbackQuery):
             if white_flag:
                 text = lexicon['payment_link_white']
             else:
-                ud_pay = await sql.get_user(int(user_id))
-                text = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
+                text = payment_tariff_summary_pro(desc_key)
             if 'gift' in callback.data:
                 text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
             else:

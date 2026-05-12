@@ -7,14 +7,14 @@ TG_TEXT_LIMIT = 4096
 
 from aiogram import Bot
 
-from bot import sql, x3
+from bot import sql
 from config import CHECKER_ID
-from keyboard import keyboard_tariff, create_kb, STYLE_PRIMARY
+from keyboard import keyboard_tariff
 from lexicon import lexicon
 from logging_config import logger
 
 WINDOW = timedelta(minutes=10)
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 def _utc_now_naive() -> datetime:
@@ -34,8 +34,8 @@ def _normalize_end_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.replace(microsecond=0)
 
 
-def _end_key(end: datetime) -> str:
-    return end.isoformat(timespec='seconds')
+def _end_key(end: datetime, tier: str) -> str:
+    return f"{end.isoformat(timespec='seconds')}|{tier}"
 
 
 def _in_send_window(now: datetime, moment: datetime) -> bool:
@@ -47,22 +47,45 @@ def _load_state(raw: Optional[str], end_key: str) -> Set[str]:
         return set()
     try:
         data = json.loads(raw)
-        if data.get('v') != STATE_VERSION or data.get('e') != end_key:
-            return set()
-        return set(data.get('s', []))
+        v = data.get('v')
+        if v == STATE_VERSION:
+            return set(data.get('ends', {}).get(end_key, {}).get('s', []))
+        # v == 1: одна подписка; старый ключ e без суффикса |tier — мигрируем на tier main
+        if v == 1:
+            old_e = data.get('e')
+            if old_e == end_key:
+                return set(data.get('s', []))
+            if end_key.endswith('|main'):
+                iso_part = end_key.split('|', 1)[0]
+                if old_e == iso_part:
+                    return set(data.get('s', []))
+        return set()
     except (json.JSONDecodeError, TypeError):
         return set()
 
 
-def _dump_state(end_key: str, sent: Set[str]) -> str:
-    return json.dumps(
-        {'v': STATE_VERSION, 'e': end_key, 's': sorted(sent)},
-        separators=(',', ':'),
-    )
+def _dump_state(raw: Optional[str], end_key: str, sent: Set[str]) -> str:
+    ends: dict = {}
+    if raw:
+        try:
+            prev = json.loads(raw)
+            pv = prev.get('v')
+            if pv == STATE_VERSION:
+                ends = dict(prev.get('ends', {}))
+            elif pv == 1 and prev.get('e'):
+                ends[prev['e']] = {'s': sorted(prev.get('s', []))}
+        except (json.JSONDecodeError, TypeError):
+            pass
+    ends[end_key] = {'s': sorted(sent)}
+    return json.dumps({'v': STATE_VERSION, 'ends': ends}, separators=(',', ':'))
 
 
-async def _persist_push_state(user_id: int, end_key: str, sent: Set[str]):
-    await sql.update_field_str_1(user_id, _dump_state(end_key, sent))
+async def _persist_push_state(
+    user_id: int, field_str_1_raw: Optional[str], end_key: str, sent: Set[str]
+) -> str:
+    new_val = _dump_state(field_str_1_raw, end_key, sent)
+    await sql.update_field_str_1(user_id, new_val)
+    return new_val
 
 
 def _format_ids_line(label: str, ids: List[int]) -> str:
@@ -111,25 +134,28 @@ async def send_message_cron(bot: Bot):
     sent_count_1 = 0
     sent_count_0 = 0
     sent_count_week = 0
-    sent_count_second_chance = 0
     failed_count = 0
     ids_7: List[int] = []
     ids_3: List[int] = []
     ids_1: List[int] = []
     ids_0: List[int] = []
     ids_week: List[int] = []
-    ids_second_chance: List[int] = []
 
     keyboard = keyboard_tariff()
 
-    for user_id, end_raw, _is_pay_flag, ttclid, field_str_1_raw in candidate_rows:
+    push_field_cache: dict[int, Optional[str]] = {}
+
+    for user_id, end_raw, _is_pay_flag, field_str_1_raw, tier in candidate_rows:
         try:
+            if user_id not in push_field_cache:
+                push_field_cache[user_id] = field_str_1_raw
+
             end = _normalize_end_utc(end_raw)
             if end is None:
                 continue
 
-            end_key = _end_key(end)
-            sent = _load_state(field_str_1_raw, end_key)
+            end_key = _end_key(end, tier)
+            sent = _load_state(push_field_cache[user_id], end_key)
 
             if now < end:
                 t7 = end - timedelta(days=7)
@@ -141,7 +167,9 @@ async def send_message_cron(bot: Bot):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_7'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     sent.add('7')
-                    await _persist_push_state(user_id, end_key, sent)
+                    push_field_cache[user_id] = await _persist_push_state(
+                        user_id, push_field_cache[user_id], end_key, sent
+                    )
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_7 += 1
                     ids_7.append(user_id)
@@ -150,7 +178,9 @@ async def send_message_cron(bot: Bot):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     sent.add('3')
-                    await _persist_push_state(user_id, end_key, sent)
+                    push_field_cache[user_id] = await _persist_push_state(
+                        user_id, push_field_cache[user_id], end_key, sent
+                    )
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_3 += 1
                     ids_3.append(user_id)
@@ -159,7 +189,9 @@ async def send_message_cron(bot: Bot):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_1'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     sent.add('1')
-                    await _persist_push_state(user_id, end_key, sent)
+                    push_field_cache[user_id] = await _persist_push_state(
+                        user_id, push_field_cache[user_id], end_key, sent
+                    )
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_1 += 1
                     ids_1.append(user_id)
@@ -168,94 +200,43 @@ async def send_message_cron(bot: Bot):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_0'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     sent.add('h')
-                    await _persist_push_state(user_id, end_key, sent)
+                    push_field_cache[user_id] = await _persist_push_state(
+                        user_id, push_field_cache[user_id], end_key, sent
+                    )
                     await sql.mark_notification_as_sent(user_id)
                     sent_count_0 += 1
                     ids_0.append(user_id)
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 1 час")
             else:
-                t_second = end + timedelta(days=7)
-                if (
-                    'sc' not in sent
-                    and _in_send_window(now, t_second)
-                    and not ttclid
-                ):
-                    await bot.send_message(
-                        chat_id=user_id,
-                        text=lexicon['second_chance_message'],
-                        reply_markup=create_kb(
-                            1,
-                            styles={'connect_vpn': STYLE_PRIMARY},
-                            connect_vpn='🔗 Подключить ВПН',
-                        ),
-                    )
-                    logger.info(f"Отправлено push-уведомление пользователю {user_id} за second_chance")
-                    user_id_str = str(user_id)
-                    try:
-                        response = await x3.updateClient(4, user_id_str, user_id)
-                        if response:
-                            result_active = await x3.activ(user_id_str)
-                            subscription_time = result_active.get('time', '-')
-                            if subscription_time != '-':
-                                try:
-                                    new_end_date = datetime.strptime(
-                                        subscription_time, '%d-%m-%Y %H:%M МСК'
-                                    )
-                                    await sql.update_subscription_end_date(user_id, new_end_date)
-                                    logger.info(
-                                        f"✅ Дата подписки для {user_id} обновлена после second_chance"
-                                    )
-                                except ValueError as e:
-                                    logger.error(
-                                        f"Ошибка парсинга даты second_chance для {user_id}: {e}"
-                                    )
-                        else:
-                            logger.error(
-                                f"❌ Не удалось добавить 4 дня пользователю {user_id} (second_chance)"
-                            )
-                    except Exception as e:
-                        logger.error(f"Ошибка при добавлении 4 дней пользователю {user_id}: {e}")
-
-                    utc_today = now.date()
-                    ttclid_value = f"second_chance_{utc_today.strftime('%d%m%y')}"
-                    try:
-                        await sql.update_ttclid(user_id, ttclid_value)
-                        logger.info(f"✅ ttclid для {user_id} установлен: {ttclid_value}")
-                    except Exception as e:
-                        logger.error(f"Ошибка обновления ttclid для {user_id}: {e}")
-
-                    sent.add('sc')
-                    await _persist_push_state(user_id, end_key, sent)
-                    sent_count_second_chance += 1
-                    ids_second_chance.append(user_id)
-                else:
-                    n = 1
-                    while n <= 200:
-                        moment = end + timedelta(days=3 * n)
-                        if moment > now + WINDOW:
-                            break
-                        key = f'p{n}'
-                        if key not in sent and _in_send_window(now, moment):
-                            await bot.send_message(
-                                chat_id=user_id, text=lexicon['push_off'], reply_markup=keyboard
-                            )
-                            await asyncio.sleep(0.05)
-                            sent.add(key)
-                            await _persist_push_state(user_id, end_key, sent)
-                            await sql.mark_notification_as_sent(user_id)
-                            sent_count_week += 1
-                            ids_week.append(user_id)
-                            logger.info(
-                                f"Отправлено push-уведомление пользователю {user_id} "
-                                f"после окончания подписки (+{3 * n} дн от даты end)"
-                            )
-                            break
-                        n += 1
+                n = 1
+                while n <= 200:
+                    moment = end + timedelta(days=3 * n)
+                    if moment > now + WINDOW:
+                        break
+                    key = f'p{n}'
+                    if key not in sent and _in_send_window(now, moment):
+                        await bot.send_message(
+                            chat_id=user_id, text=lexicon['push_off'], reply_markup=keyboard
+                        )
+                        await asyncio.sleep(0.05)
+                        sent.add(key)
+                        push_field_cache[user_id] = await _persist_push_state(
+                            user_id, push_field_cache[user_id], end_key, sent
+                        )
+                        await sql.mark_notification_as_sent(user_id)
+                        sent_count_week += 1
+                        ids_week.append(user_id)
+                        logger.info(
+                            f"Отправлено push-уведомление пользователю {user_id} "
+                            f"после окончания подписки (+{3 * n} дн от даты end)"
+                        )
+                        break
+                    n += 1
         except Exception:
             failed_count += 1
 
     all_sent_ids: List[int] = (
-        ids_7 + ids_3 + ids_1 + ids_0 + ids_week + ids_second_chance
+        ids_7 + ids_3 + ids_1 + ids_0 + ids_week
     )
     report_body = f'''Рассылка об окончании подписки (UTC, окна 10 мин):
 за 7 дней: {sent_count_7}
@@ -263,7 +244,6 @@ async def send_message_cron(bot: Bot):
 за 1 день: {sent_count_1}
 за 1 час: {sent_count_0}
 после окончания каждые 3 дня: {sent_count_week}
-повторный шанс (second_chance): {sent_count_second_chance}
 
 Не получилось: {failed_count}
 '''

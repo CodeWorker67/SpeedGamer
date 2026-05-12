@@ -1,29 +1,16 @@
-from bot import bot, sql
+from bot import bot
 from config import ADMIN_IDS
 from keyboard import keyboard_payment_stars
 from logging_config import logger
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, LabeledPrice, PreCheckoutQuery, Message
-from lexicon import lexicon, payment_link_pro_for_hwid
+from lexicon import dct_price, lexicon, payment_tariff_summary_pro
 from payments.process_payload import process_confirmed_payment
-from tariff_resolve import tariff_days_for_x3
+from tariff_resolve import tariff_days_for_x3, device_from_tariff_key
 
 
 router: Router = Router()
-
-PRO_HWID_DEVICE_LIMIT = 5
-
-
-def get_stars_amount(currency: str, duration: str) -> float:
-    """Возвращает цену для тарифа в указанной криптовалюте"""
-    prices = {
-        'Stars': {
-            '3': 10, '7': 99, '30': 199, '90': 369, '120': 369, '180': 699, 'white_30': 399,
-            'new_7': 99, 'new_30': 249, 'new_90': 599, 'new_3000': 3490,
-        }
-    }
-    return prices.get(currency, {}).get(duration, 0)
 
 
 @router.callback_query(F.data.startswith('stars_'))
@@ -41,22 +28,25 @@ async def process_payment_stars(callback: CallbackQuery):
     else:
         duration_plain = duration_key
 
-    stars_amount = get_stars_amount('Stars', duration_key)
+    stars_amount = int(dct_price.get(duration_key, 0))
     if callback.from_user.id in ADMIN_IDS:
         stars_amount = 1
     user_id = str(callback.from_user.id)
 
     days_payload = str(tariff_days_for_x3(duration_plain))
+    device_n = device_from_tariff_key(duration_plain)
 
-    payload = f"user_id:{user_id},duration:{days_payload},white:{white_flag},gift:{gift_flag},method:stars,amount:{stars_amount}"
+    payload = (
+        f"user_id:{user_id},duration:{days_payload},white:{white_flag},gift:{gift_flag},"
+        f"method:stars,amount:{stars_amount},device:{device_n}"
+    )
 
     prices = [LabeledPrice(label="XTR", amount=stars_amount)]
     title = f"Оплата подписки {'в подарок другу ' if gift_flag else ''}на {days_payload} дней."
     if white_flag:
         description = lexicon['payment_link_white']
     else:
-        ud_pay = await sql.get_user(int(user_id))
-        description = payment_link_pro_for_hwid(PRO_HWID_DEVICE_LIMIT)
+        description = payment_tariff_summary_pro(duration_key)
     await bot.send_invoice(
         callback.from_user.id,
         title=title,

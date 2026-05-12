@@ -57,6 +57,7 @@ class Gifts(Base):
     duration = Column(Integer, nullable=False)
     recepient_id = Column(BigInteger, nullable=True)
     white_flag = Column(Boolean, default=False)
+    device_slots = Column(Integer, default=5)
     flag = Column(Boolean, default=False)
 
 
