@@ -9,7 +9,7 @@ from aiogram import Bot
 
 from bot import sql
 from config import CHECKER_ID
-from keyboard import keyboard_tariff
+from keyboard import keyboard_buy_device_tier
 from lexicon import lexicon
 from logging_config import logger
 
@@ -141,7 +141,7 @@ async def send_message_cron(bot: Bot):
     ids_0: List[int] = []
     ids_week: List[int] = []
 
-    keyboard = keyboard_tariff()
+    keyboard = keyboard_buy_device_tier()
 
     push_field_cache: dict[int, Optional[str]] = {}
 

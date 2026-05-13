@@ -5,11 +5,11 @@ import requests
 from bot import sql, x3, bot
 from config import CHANEL_ID, ADMIN_IDS, BOT_URL
 from lead_tracker import post_user_registered, tracker_source_from_ref_and_stamp
-from keyboard import (keyboard_start, keyboard_start_bonus, keyboard_tariff,
+from keyboard import (keyboard_start, keyboard_start_bonus,
                       keyboard_buy_device_tier, keyboard_buy_duration,
                       keyboard_gift_device_tier, keyboard_gift_duration,
-                      keyboard_subscription, ref_keyboard, keyboard_gift_tariff,
-                      keyboard_payment_method, keyboard_payment_method_stock,
+                      keyboard_subscription, ref_keyboard,
+                      keyboard_payment_method,
                       keyboard_inline_ref, create_kb, STYLE_PRIMARY)
 from logging_config import logger
 import asyncio
@@ -27,11 +27,8 @@ router: Router = Router()
 PRO_HWID_DEVICE_LIMIT = 5
 REFERRER_REF_BONUS_DAYS = 7
 
-_LEGACY_PAYMENT_KEYS = frozenset({
-    'r_3', 'r_7', 'r_30', 'r_90', 'r_180', 'r_white_30',
-    'r_new_7', 'r_new_30', 'r_new_90', 'r_new_3000',
-})
 _NEW_DEVICE_TARIFF_RE = re.compile(r'^r_m(1|3|6|12)_d(3|5|10)$')
+_GIFT_DEVICE_TARIFF_RE = re.compile(r'^gift_r_m(1|3|6|12)_d(3|5|10)$')
 
 
 # Этот хэндлер срабатывает на команду /start
@@ -184,19 +181,13 @@ async def direct_connect_vpn_cb(callback: CallbackQuery):
     )
 
 
-@router.callback_query(
-    F.data.in_(_LEGACY_PAYMENT_KEYS) | F.data.regexp(_NEW_DEVICE_TARIFF_RE),
-)
+@router.callback_query(F.data.regexp(_NEW_DEVICE_TARIFF_RE))
 async def process_payment_method(callback: CallbackQuery):
     await callback.answer()
     ud = await sql.get_user(callback.from_user.id)
     tariff = callback.data
-    if 'white' in callback.data:
-        await sql.add_white_counter_if_not_exists(callback.from_user.id)
-        text = lexicon['payment_link_white']
-    else:
-        dk = tariff_desc_key_from_payment_callback(tariff)
-        text = payment_tariff_summary_pro(dk)
+    dk = tariff_desc_key_from_payment_callback(tariff)
+    text = payment_tariff_summary_pro(dk)
     text += '\n\nВыберите способ оплаты:'
     await callback.message.answer(text, reply_markup=keyboard_payment_method(tariff))
 
@@ -354,17 +345,13 @@ async def gift_back_to_tier(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith('gift_r_'))
+@router.callback_query(F.data.regexp(_GIFT_DEVICE_TARIFF_RE))
 async def process_gift_payment_method(callback: CallbackQuery):
     await callback.answer()
     ud = await sql.get_user(callback.from_user.id)
     tariff = callback.data
-    if 'white' in callback.data:
-        await sql.add_white_counter_if_not_exists(callback.from_user.id)
-        text = lexicon['payment_link_white']
-    else:
-        dk = tariff_desc_key_from_payment_callback(tariff)
-        text = payment_tariff_summary_pro(dk)
+    dk = tariff_desc_key_from_payment_callback(tariff)
+    text = payment_tariff_summary_pro(dk)
     text += '\n\nВыберите способ оплаты <b>подарочной подписки</b>:'
     await callback.message.answer(text, reply_markup=keyboard_payment_method(tariff))
 
@@ -500,21 +487,6 @@ async def user_blocked_bot(event: ChatMemberUpdated):
 async def user_unblocked_bot(event: ChatMemberUpdated):
     await sql.update_delete(event.from_user.id, False)
     logger.success(f'Юзер {event.from_user.id} разблокировал бота')
-
-
-@router.callback_query(F.data == 'r_120')
-async def process_payment_method_bonus(callback: CallbackQuery):
-    await callback.answer()
-    user_data = await sql.get_user(callback.from_user.id)
-    if not user_data:
-        return
-    if user_data[8]:
-        await callback.message.answer('Акция действительна только при первой оплате.',
-                                      reply_markup=create_kb(1, back_to_main='🔙 Назад'))
-        return
-    tariff = callback.data
-    await callback.message.answer('Выберите метод оплаты акционной подписки:',
-                                  reply_markup=keyboard_payment_method_stock(tariff))
 
 
 @router.chat_member()

@@ -87,55 +87,6 @@ def keyboard_start():
     )
 
 
-_STYLES_TARIFF = {
-    "r_7": STYLE_PRIMARY,
-    "r_30": STYLE_PRIMARY,
-    "r_90": STYLE_SUCCESS,
-    "r_180": STYLE_SUCCESS,
-    "r_120": STYLE_SUCCESS,
-    "r_white_30": STYLE_PRIMARY,
-}
-
-
-def keyboard_tariff_bonus():
-    return keyboard_tariff()
-
-
-def keyboard_tariff():
-    return create_kb(
-        1,
-        styles=_STYLES_TARIFF,
-        r_7="🤌 7 дней - 99 ₽",
-        r_30="🤝 30 дней - 199 ₽",
-        r_90="👌 90 дней - 369 ₽",
-        r_180="💪 180 дней - 699 ₽",
-        # r_white_30="🦾 Включи мобильный - 399 ₽",
-        back_to_main="🔙 Назад",
-    )
-
-
-_STYLES_GIFT = {
-    "gift_r_7": STYLE_PRIMARY,
-    "gift_r_30": STYLE_PRIMARY,
-    "gift_r_90": STYLE_SUCCESS,
-    "gift_r_180": STYLE_SUCCESS,
-    "gift_r_white_30": STYLE_PRIMARY,
-}
-
-
-def keyboard_gift_tariff():
-    return create_kb(
-        1,
-        styles=_STYLES_GIFT,
-        gift_r_7="🤌 7 дней - 99 ₽",
-        gift_r_30="🤝 30 дней - 199 ₽",
-        gift_r_90="👌 90 дней - 369 ₽",
-        gift_r_180="💪 180 дней - 699 ₽",
-        # gift_r_white_30="🦾 Включи мобильный - 399 ₽",
-        back_to_main="🔙 Назад",
-    )
-
-
 def keyboard_buy_device_tier():
     return create_kb(
         1,

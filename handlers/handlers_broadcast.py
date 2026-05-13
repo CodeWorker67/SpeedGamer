@@ -23,8 +23,8 @@ from keyboard import (
     STYLE_PRIMARY,
     STYLE_SUCCESS,
     create_kb,
+    keyboard_buy_device_tier,
     keyboard_start,
-    keyboard_tariff,
 )
 from logging_config import logger
 from telegram_ids import is_telegram_chat_id
@@ -70,12 +70,9 @@ CUSTOM_PRESETS = [
     ("ref", "👥 Рефералка", STYLE_PRIMARY),
     ("buy_gift", "🎁 Подарить подписку", STYLE_SUCCESS),
     ("ref_invite", "Пригласить друзей🫶", STYLE_SUCCESS),
-    ("r_7", "🤌 7 дней - 99 ₽", STYLE_PRIMARY),
-    ("r_30", "🤝 30 дней - 199 ₽", STYLE_PRIMARY),
-    ("r_90", "👌 90 дней - 369 ₽", STYLE_SUCCESS),
-    ("r_180", "💪 180 дней - 699 ₽", STYLE_SUCCESS),
-    ("r_120", "🔥 Акция: 120 дней - 369 ₽", STYLE_SUCCESS),
-    ("r_white_30", "🦾 Включи мобильный - 399 ₽", STYLE_PRIMARY),
+    ("buy_tier_3", "🔹 Тарифы на 3️⃣ устройства", STYLE_PRIMARY),
+    ("buy_tier_5", "🔸 Тарифы на 5️⃣ устройств", STYLE_PRIMARY),
+    ("buy_tier_10", "🏆 Тарифы на 🔟 устройств", STYLE_SUCCESS),
 ]
 
 
@@ -118,7 +115,7 @@ def _audience_markup() -> InlineKeyboardMarkup:
 def _keyboard_type_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Клавиатура с тарифами", callback_data=f"{CB_KB}tariff")],
+            [InlineKeyboardButton(text="Клавиатура выбора тарифа", callback_data=f"{CB_KB}tariff")],
             [InlineKeyboardButton(text="Клавиатура стартовая", callback_data=f"{CB_KB}start")],
             [InlineKeyboardButton(text="Без клавиатуры", callback_data=f"{CB_KB}none")],
             [InlineKeyboardButton(text="Кастомные кнопки", callback_data=f"{CB_KB}custom")],
@@ -261,7 +258,7 @@ def _resolve_reply_markup(
     if keyboard_mode == "none":
         return None
     if keyboard_mode == "tariff":
-        return keyboard_tariff()
+        return keyboard_buy_device_tier()
     if keyboard_mode == "start":
         return keyboard_start()
     if keyboard_mode == "custom":
