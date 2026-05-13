@@ -4,7 +4,7 @@ from typing import List, Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import CHANEL_URL, BOT_URL
+from config import CHANEL_URL, BOT_URL, SUPPORT_URL
 from lexicon import dct_desc
 
 BTN_BACK = "🔙 Назад"
@@ -64,11 +64,33 @@ def chanel_keyboard():
 
 
 def keyboard_start_bonus():
-    return create_kb(
-        1,
-        styles={"buy_vpn": STYLE_SUCCESS},
-        buy_vpn="Купить подписку",
-    )
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="🛒 Купить подписку",
+                callback_data="buy_vpn",
+                style=STYLE_SUCCESS,
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="👥 Рефералка",
+                callback_data="ref",
+                style=STYLE_PRIMARY,
+            ),
+        ],
+    ]
+    if SUPPORT_URL:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="👷 Поддержка",
+                    url=SUPPORT_URL,
+                    style=STYLE_PRIMARY,
+                ),
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def keyboard_start():
