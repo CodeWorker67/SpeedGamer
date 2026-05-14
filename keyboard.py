@@ -74,7 +74,7 @@ def keyboard_start_bonus():
         ],
         [
             InlineKeyboardButton(
-                text="👥 Рефералка",
+                text="🎁 Бесплатный VPN за приглашения",
                 callback_data="ref",
                 style=STYLE_PRIMARY,
             ),
