@@ -32,6 +32,9 @@ from payments.pay_cryptobot import create_cryptobot_payment
 from payments.pay_freekassa import pay as fk_pay
 from tariff_resolve import device_from_tariff_key, tariff_days_for_x3, tariff_rub_and_desc
 
+# Маркер в строке payload платежей, созданных через HTTP API страницы подписки (только для записи в БД).
+_SUB_PAGE_PAYMENT_SOURCE = "subpage"
+
 DurationId = Literal[
     "m1_d3",
     "m3_d3",
@@ -181,6 +184,7 @@ async def sub_page_pay_fk_sbp(body: SubPagePayIn, request: Request, _: SubPageAu
         white=white,
         device=device_n,
         ui_kind="sbp",
+        source=_SUB_PAGE_PAYMENT_SOURCE,
     )
     if result.get("status") != "pending":
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж FreeKassa (СБП)")
@@ -210,6 +214,7 @@ async def sub_page_pay_fk_card(body: SubPagePayIn, request: Request, _: SubPageA
         white=white,
         device=device_n,
         ui_kind="card",
+        source=_SUB_PAGE_PAYMENT_SOURCE,
     )
     if result.get("status") != "pending":
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж FreeKassa (карта)")
@@ -232,7 +237,7 @@ async def sub_page_pay_stars(body: SubPagePayIn, request: Request, _: SubPageAut
     gift_flag = False
     payload = (
         f"user_id:{body.user_id},duration:{days_panel},white:{white},gift:{gift_flag},"
-        f"method:stars,amount:{stars_amount},device:{device_n}"
+        f"method:stars,amount:{stars_amount},device:{device_n},source:{_SUB_PAGE_PAYMENT_SOURCE}"
     )
     prices = [LabeledPrice(label="XTR", amount=stars_amount)]
     title = f"Оплата подписки на {days_panel} дней."
@@ -278,6 +283,7 @@ async def sub_page_pay_cryptobot(body: SubPagePayIn, request: Request, _: SubPag
         white=white,
         is_gift=False,
         device=device_n,
+        source=_SUB_PAGE_PAYMENT_SOURCE,
     )
     if result.get("status") != "pending":
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать счёт CryptoBot")
