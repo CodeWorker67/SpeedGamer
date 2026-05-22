@@ -38,6 +38,12 @@ LEAD_TRACKER_BASE: Optional[str] = (os.environ.get("LEAD_TRACKER_BASE") or "").s
 LEAD_TRACKER_API_KEY: Optional[str] = (os.environ.get("LEAD_TRACKER_API_KEY") or "").strip() or None
 LEAD_TRACKER_STAR_RUB_PER_STAR: str = os.environ.get("LEAD_TRACKER_STAR_RUB_PER_STAR", "1.0")
 
+PARTNER_PROCENT: int = int(os.environ.get("PARTNER_PROCENT", "20"))
+PARTNER_MIN: int = int(os.environ.get("PARTNER_MIN", "500"))
+PARTNER_SUPPORT_URL: str = (
+    os.environ.get("PARTNER_SUPPORT_URL") or os.environ.get("SUPPORT_URL") or ""
+).strip()
+
 # Web API (web_api.py): кастомная страница подписки + uvicorn в main
 WEB_API_PORT: int = int(os.environ.get("WEB_API_PORT", "8080"))
 SUB_PAGE_API_KEY: Optional[str] = (os.environ.get("SUB_PAGE_API_KEY") or "").strip() or None

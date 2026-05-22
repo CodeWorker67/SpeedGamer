@@ -17,12 +17,13 @@
  *
  * 3) docker build образа subscription-page и compose up, как раньше.
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
     Box,
     Button,
     Card,
     Center,
+    Collapse,
     Container,
     Group,
     Image,
@@ -30,7 +31,8 @@ import {
     SimpleGrid,
     Stack,
     Text,
-    Title
+    Title,
+    UnstyledButton
 } from '@mantine/core'
 import { TSubscriptionPagePlatformKey } from '@remnawave/subscription-page-types'
 
@@ -142,10 +144,15 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         return Number(user.daysLeft) > 0
     }, [user.daysLeft, user.userStatus])
 
+    const [payExpanded, setPayExpanded] = useState(() => !subscriptionStillActive)
     const [modalOpen, setModalOpen] = useState(false)
     const [pickedDuration, setPickedDuration] = useState<DurationId | null>(null)
     const [busyMethod, setBusyMethod] = useState<PayMethodId | null>(null)
     const [errorText, setErrorText] = useState<string | null>(null)
+
+    useEffect(() => {
+        setPayExpanded(!subscriptionStillActive)
+    }, [subscriptionStillActive])
 
     const openPay = useCallback((d: DurationId) => {
         setErrorText(null)
@@ -204,11 +211,8 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         [pickedDuration, payCfg.apiBase, payCfg.apiKey, userId]
     )
 
-    if (subscriptionStillActive) {
-        return null
-    }
-
     if (!payCfg.apiKey) {
+        if (subscriptionStillActive) return null
         return (
             <Card p="md" radius="lg" withBorder>
                 <Text c="dimmed" size="sm">
@@ -220,6 +224,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
     }
 
     if (userId == null) {
+        if (subscriptionStillActive) return null
         return (
             <Card p="md" radius="lg" withBorder>
                 <Text c="dimmed" size="sm">
@@ -235,26 +240,45 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         <>
             <Card p="md" radius="lg" withBorder>
                 <Stack gap="md">
-                    <Title c="white" order={5}>
-                        {payBlockTitle(tier)}
-                    </Title>
-                    <Stack gap="sm">
-                        {rows.map((row) => (
-                            <Button
-                                key={row.duration}
-                                fullWidth
-                                justify="space-between"
-                                onClick={() => openPay(row.duration)}
-                                radius="md"
-                                size={isMobile ? 'sm' : 'md'}
-                                variant="light"
+                    <UnstyledButton onClick={() => setPayExpanded((v) => !v)} w="100%">
+                        <Group gap="sm" justify="space-between" wrap="nowrap">
+                            <Title c="white" order={5} style={{ flex: 1, textAlign: 'left' }}>
+                                {payBlockTitle(tier)}
+                            </Title>
+                            <Box
+                                aria-hidden
+                                c="dimmed"
+                                style={{
+                                    flexShrink: 0,
+                                    fontSize: 12,
+                                    lineHeight: 1,
+                                    transform: payExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                    transition: 'transform 200ms ease'
+                                }}
                             >
-                                <Text fw={500} size="sm" style={{ textAlign: 'left' }}>
-                                    {row.label}
-                                </Text>
-                            </Button>
-                        ))}
-                    </Stack>
+                                ▼
+                            </Box>
+                        </Group>
+                    </UnstyledButton>
+                    <Collapse in={payExpanded}>
+                        <Stack gap="sm">
+                            {rows.map((row) => (
+                                <Button
+                                    key={row.duration}
+                                    fullWidth
+                                    justify="space-between"
+                                    onClick={() => openPay(row.duration)}
+                                    radius="md"
+                                    size={isMobile ? 'sm' : 'md'}
+                                    variant="light"
+                                >
+                                    <Text fw={500} size="sm" style={{ textAlign: 'left' }}>
+                                        {row.label}
+                                    </Text>
+                                </Button>
+                            ))}
+                        </Stack>
+                    </Collapse>
                 </Stack>
             </Card>
 

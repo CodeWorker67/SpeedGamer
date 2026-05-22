@@ -79,6 +79,13 @@ def keyboard_start_bonus():
                 style=STYLE_PRIMARY,
             ),
         ],
+        [
+            InlineKeyboardButton(
+                text="💸 Зарабатывай с нами",
+                callback_data="partner_earn",
+                style=STYLE_SUCCESS,
+            ),
+        ],
     ]
     if SUPPORT_URL:
         rows.append(
@@ -94,7 +101,7 @@ def keyboard_start_bonus():
 
 
 def keyboard_start():
-    return create_kb(
+    markup = create_kb(
         1,
         styles={
             "buy_vpn": STYLE_SUCCESS,
@@ -104,9 +111,20 @@ def keyboard_start():
         },
         buy_vpn="🛒 Купить подписку",
         connect_vpn="🔗 Подключить ВПН",
-        ref="👥 Рефералка",
+        ref="👥 Бесплатный VPN за приглашения",
         buy_gift="🎁 Подарить подписку",
     )
+    rows = list(markup.inline_keyboard)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="💸 Зарабатывай с нами",
+                callback_data="partner_earn",
+                style=STYLE_SUCCESS,
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def keyboard_buy_device_tier():
@@ -462,3 +480,46 @@ def keyboard_import_end(url_app: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")],
         ]
     )
+
+
+def keyboard_partner_intro():
+    return create_kb(
+        1,
+        styles={
+            "partner_create_link": STYLE_SUCCESS,
+            "back_to_main": STYLE_PRIMARY,
+        },
+        partner_create_link='🔗 Создать партнёрскую ссылку',
+        back_to_main=BTN_BACK,
+    )
+
+
+def keyboard_partner_dashboard():
+    return create_kb(
+        1,
+        styles={
+            "partner_withdraw": STYLE_SUCCESS,
+            "back_to_main": STYLE_PRIMARY,
+        },
+        partner_withdraw='💰 Создать заявку на вывод',
+        back_to_main=BTN_BACK,
+    )
+
+
+def keyboard_partner_withdraw(support_url: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="💬 Вывести деньги",
+                url=support_url,
+                style=STYLE_SUCCESS,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data="partner_earn",
+                style=STYLE_PRIMARY,
+            )
+        ],
+    ])
