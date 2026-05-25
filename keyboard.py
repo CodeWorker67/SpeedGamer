@@ -8,6 +8,7 @@ from config import CHANEL_URL, BOT_URL, SUPPORT_URL
 from lexicon import dct_desc
 
 BTN_BACK = "🔙 Назад"
+REVIEWS_URL = "https://t.me/otzividlyasvoi"
 
 STYLE_PRIMARY = "primary"
 STYLE_SUCCESS = "success"
@@ -86,6 +87,13 @@ def keyboard_start_bonus():
                 style=STYLE_SUCCESS,
             ),
         ],
+        [
+            InlineKeyboardButton(
+                text="📋 Отзывы",
+                url=REVIEWS_URL,
+                style=STYLE_PRIMARY,
+            ),
+        ],
     ]
     if SUPPORT_URL:
         rows.append(
@@ -121,6 +129,15 @@ def keyboard_start():
                 text="💸 Зарабатывай с нами",
                 callback_data="partner_earn",
                 style=STYLE_SUCCESS,
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="📋 Отзывы",
+                url=REVIEWS_URL,
+                style=STYLE_PRIMARY,
             )
         ]
     )
