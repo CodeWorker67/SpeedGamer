@@ -373,10 +373,6 @@ async def trial_return_get_cb(callback: CallbackQuery):
         await callback.answer("Ошибка профиля. Попробуйте /start.", show_alert=True)
         return
 
-    if user_has_active_pro_subscription(user) or await _any_panel_pro_subscription_active(uid):
-        await callback.answer("У вас уже есть активная подписка PRO.", show_alert=True)
-        return
-
     device_slots = resolve_trial_device_slots(user)
     user_id_str = panel_username(uid, white=False, device_slots=device_slots)
 
