@@ -11,6 +11,8 @@ from bot import sql
 from config import API_FREEKASSA, SHOP_ID_FREEKASSA, FREEKASSA_SERVER_IP, ADMIN_IDS
 from keyboard import keyboard_payment_sbp, create_kb, BTN_BACK
 from lexicon import lexicon, payment_tariff_summary_pro
+from payments.payment_limits import payment_creation_allowed
+from payments.payload_source import SITE
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
@@ -253,6 +255,70 @@ async def pay_for_gift(
         return {"status": "pending", "url": url, "id": payment_id}
     except Exception as e:
         logger.error(f"❌ FreeKassa create_order (gift): {e}")
+        return {"status": "error", "url": "", "id": ""}
+
+
+async def pay_site(
+    val: str,
+    des: str,
+    billing_user_id: int,
+    duration: str,
+    white: bool,
+    device: int,
+    is_gift: bool,
+    kind: UiKind,
+    telegram_username: Optional[str] = None,
+    payload_source: str = SITE,
+) -> Dict[str, Any]:
+    """Оплата с сайта (web API): payload с user_id, method fk_sbp/fk_card, device."""
+    if not await payment_creation_allowed(int(billing_user_id), telegram_username):
+        return {"status": "rate_limited", "url": "", "id": ""}
+    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
+        logger.error("FreeKassa site: не заданы API_FREEKASSA или SHOP_ID_FREEKASSA")
+        return {"status": "error", "url": "", "id": ""}
+
+    if billing_user_id in ADMIN_IDS:
+        val = "1"
+
+    pm = _payload_method(kind)
+    gift_str = "True" if is_gift else "False"
+    amount_rub = _fk_amount_rub(str(val), kind)
+    payload = (
+        f"user_id:{billing_user_id},duration:{duration},white:{white},gift:{gift_str},"
+        f"method:{pm},amount:{amount_rub},device:{device},source:{payload_source}"
+    )
+    fk = FreekassaPayment(API_FREEKASSA, SHOP_ID_FREEKASSA)
+    nonce = await sql.alloc_fk_api_nonce()
+    payment_id = f"fk{billing_user_id}n{nonce}"
+    email = f"{billing_user_id}@telegram.org"
+    fk_i = _fk_payment_system_id(kind)
+    try:
+        data, signature = await fk.create_order(
+            nonce=nonce,
+            payment_id=payment_id,
+            amount=float(amount_rub),
+            email=email,
+            ip=FREEKASSA_SERVER_IP,
+            payment_system_id=fk_i,
+        )
+        url = _payment_url_from_create(data)
+        fk_oid = data.get("orderId")
+        await sql.add_fk_sbp_payment(
+            billing_user_id,
+            amount_rub,
+            "pending",
+            payment_id,
+            int(fk_oid) if fk_oid is not None else None,
+            payload,
+            nonce,
+            signature,
+            is_gift=is_gift,
+            method=_db_method(kind),
+        )
+        logger.info("✅ FreeKassa site ({}): paymentId={}, orderId={}", pm, payment_id, fk_oid)
+        return {"status": "pending", "url": url, "id": payment_id}
+    except Exception as e:
+        logger.error("❌ FreeKassa site create_order: {}", e)
         return {"status": "error", "url": "", "id": ""}
 
 

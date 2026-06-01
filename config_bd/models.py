@@ -47,6 +47,8 @@ class Users(Base):
     field_bool_1 = Column(Boolean, default=False)
     field_bool_2 = Column(Boolean, default=False)
     field_bool_3 = Column(Boolean, default=False)
+    password_hash = Column(String(255), nullable=True)
+    linked_telegram_id = Column(BigInteger, nullable=True)
     partner = Column(String(100), nullable=True)
     partner_balance = Column(Integer, default=0)
     partner_pay = Column(Integer, default=0)
@@ -190,6 +192,26 @@ class Online(Base):
     users_active = Column(Integer, nullable=False)
     users_pay = Column(Integer, nullable=False)
     users_trial = Column(Integer, nullable=False)
+
+
+class LinkingCodes(Base):
+    __tablename__ = 'linking_codes'
+
+    code_id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(32), nullable=False, unique=True)
+    user_id = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+
+class PasswordResetCodes(Base):
+    __tablename__ = 'password_reset_codes'
+
+    pass_id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), nullable=False)
+    code = Column(String(16), nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
 
 
 # Функция для создания таблиц (запустить один раз)

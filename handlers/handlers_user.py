@@ -1,9 +1,10 @@
 import re
 import time
+import urllib.parse
 import requests
 
 from bot import sql, x3, bot
-from config import CHANEL_ID, ADMIN_IDS, BOT_URL, PARTNER_PROCENT, PARTNER_MIN, PARTNER_SUPPORT_URL
+from config import CHANEL_ID, ADMIN_IDS, BOT_URL, PARTNER_PROCENT, PARTNER_MIN, PARTNER_SUPPORT_URL, PUBLIC_SITE_URL, SITE_URL
 from lead_tracker import post_user_registered, tracker_source_from_ref_and_stamp
 from keyboard import (keyboard_start, keyboard_start_bonus,
                       keyboard_buy_device_tier, keyboard_buy_duration,
@@ -12,7 +13,8 @@ from keyboard import (keyboard_start, keyboard_start_bonus,
                       keyboard_payment_method,
                       keyboard_inline_ref, create_kb, STYLE_PRIMARY,
                       keyboard_partner_intro, keyboard_partner_dashboard,
-                      keyboard_partner_withdraw)
+                      keyboard_partner_withdraw, OPEN_SITE_CB)
+from web_api import create_bot_site_login_token
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
@@ -20,14 +22,20 @@ from aiogram.types import Message, CallbackQuery, ChatMemberUpdated, InlineQuery
     InputTextMessageContent, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import ChatMemberUpdatedFilter, KICKED, MEMBER, Command
 from lexicon import buy_text_for_pro_hwid, lexicon, payment_tariff_summary_pro, tariff_desc_key_from_payment_callback
-from datetime import datetime
+from datetime import datetime, timezone
 from tariff_resolve import panel_username
+from config_bd.utils import (
+    user_has_active_pro_subscription,
+    resolve_trial_device_slots,
+)
 
 
 router: Router = Router()
 
 PRO_HWID_DEVICE_LIMIT = 5
 REFERRER_REF_BONUS_DAYS = 7
+_TRIAL_RETURN_GET_CB = "trial_return_get"
+_USER_TUPLE_FIELD_BOOL_3 = 26
 
 _NEW_DEVICE_TARIFF_RE = re.compile(r'^r_m(1|3|6|12)_d(3|5|10)$')
 _GIFT_DEVICE_TARIFF_RE = re.compile(r'^gift_r_m(1|3|6|12)_d(3|5|10)$')
@@ -81,6 +89,38 @@ async def process_start_command(message: Message, command: Command):
                 logger.success(
                     f'Юзер {message.from_user.id} - {message.from_user.username} зашел в бота в первый раз по реферальной ссылкой')
                 ref_login = start_arg.replace('ref', '', 1)
+
+        elif start_arg.startswith('auth_'):
+            auth_token = start_arg.replace('auth_', '', 1)
+            from web_api import confirm_tg_auth_token
+            ok = confirm_tg_auth_token(
+                auth_token,
+                message.from_user.id,
+                first_name=message.from_user.first_name or "",
+                username=message.from_user.username,
+            )
+            if ok:
+                logger.info(f'Юзер {message.from_user.id} авторизован на сайте через deeplink')
+                dashboard_url = f"{PUBLIC_SITE_URL}/dashboard" if PUBLIC_SITE_URL else ""
+                if dashboard_url:
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text="🌐 Перейти в личный кабинет",
+                                    url=dashboard_url,
+                                )
+                            ]
+                        ]
+                    )
+                    await message.answer("✅ Вы авторизованы на сайте!", reply_markup=kb)
+                else:
+                    await message.answer("✅ Вы авторизованы на сайте! Вернитесь во вкладку с сайтом.")
+            else:
+                await message.answer("❌ Ссылка устарела. Попробуйте ещё раз на сайте.")
+            if not user_data:
+                await sql.add_user(message.from_user.id, False, False)
+            existing = True
 
         elif start_arg.startswith('gift_') or 'gift_' in start_arg:
             logger.info(
@@ -173,6 +213,60 @@ async def process_start_command(message: Message, command: Command):
                              disable_web_page_preview=True)
 
 
+def _site_base_url() -> str:
+    return (PUBLIC_SITE_URL or SITE_URL).rstrip("/")
+
+
+def _site_login_url(telegram_user_id: int, first_name: str, username: str | None) -> str:
+    token = create_bot_site_login_token(
+        telegram_user_id=telegram_user_id,
+        first_name=first_name,
+        username=username,
+    )
+    return f"{_site_base_url()}/auth/bot?token={urllib.parse.quote(token, safe='')}"
+
+
+@router.callback_query(F.data == OPEN_SITE_CB)
+async def open_site_callback(callback: CallbackQuery):
+    """Ссылка на сайт с одноразовым токеном для авто-входа."""
+    await callback.answer()
+    if not _site_base_url():
+        await callback.message.answer(
+            "Сайт пока не настроен. Укажите PUBLIC_SITE_URL или SITE_URL в .env.",
+            reply_markup=create_kb(1, back_to_main="🔙 Назад"),
+        )
+        return
+    u = callback.from_user
+    login_url = _site_login_url(
+        u.id,
+        u.first_name or "",
+        u.username,
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Открыть сайт",
+                    url=login_url,
+                    style=STYLE_PRIMARY,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data="back_to_main",
+                )
+            ],
+        ]
+    )
+    await callback.message.answer(
+        "🌐 Нажмите кнопку ниже — откроется сайт, вход выполнится автоматически.\n"
+        "Ссылка действует 10 минут и только один раз.",
+        reply_markup=kb,
+        disable_web_page_preview=True,
+    )
+
+
 @router.callback_query(F.data == 'buy_vpn')
 async def buy_vpn_cb(callback: CallbackQuery):
     await callback.answer()
@@ -259,6 +353,81 @@ async def buy_back_to_tier(callback: CallbackQuery):
         reply_markup=keyboard_buy_device_tier(),
         disable_web_page_preview=True,
     )
+
+
+@router.callback_query(F.data == _TRIAL_RETURN_GET_CB)
+async def trial_return_get_cb(callback: CallbackQuery):
+    """+7 дней по кнопке из рассылки /add_7_to_all (field_bool_3, тариф 3/5/10)."""
+    uid = callback.from_user.id
+    user_data = await sql.get_user(uid)
+    if user_data is None:
+        await sql.add_user(uid, False)
+        user_data = await sql.get_user(uid)
+
+    if user_data[_USER_TUPLE_FIELD_BOOL_3]:
+        await callback.answer("Вы уже взяли свой триал!", show_alert=True)
+        return
+
+    user = await sql.get_user_object_by_user_id(uid)
+    if user is None:
+        await callback.answer("Ошибка профиля. Попробуйте /start.", show_alert=True)
+        return
+
+    if user_has_active_pro_subscription(user) or await _any_panel_pro_subscription_active(uid):
+        await callback.answer("У вас уже есть активная подписка PRO.", show_alert=True)
+        return
+
+    device_slots = resolve_trial_device_slots(user)
+    user_id_str = panel_username(uid, white=False, device_slots=device_slots)
+
+    await callback.answer()
+
+    panel_user = await x3.get_user_by_username(user_id_str)
+    if panel_user and panel_user.get("response"):
+        ok = await x3.updateClient(7, user_id_str, uid)
+    else:
+        ok = await x3.addClient(
+            7,
+            user_id_str,
+            uid,
+            hwid_device_limit=device_slots,
+        )
+
+    if not ok:
+        await callback.message.answer(
+            "Не удалось начислить дни. Попробуйте позже или напишите в поддержку."
+        )
+        return
+
+    await sql.update_in_panel(uid)
+    await sql.update_field_bool_3(uid, True)
+    await callback.message.answer(
+        "🎉 Поздравляем! Вы получили 7 триальных дней доступа к ВПН! ✨🔐",
+        reply_markup=create_kb(
+            1,
+            styles={"connect_vpn": STYLE_PRIMARY},
+            connect_vpn="🔗 Подключить VPN",
+        ),
+    )
+
+
+async def _any_panel_pro_subscription_active(uid: int) -> bool:
+    for device_slots in (3, 5, 10):
+        username = panel_username(uid, white=False, device_slots=device_slots)
+        existing = await x3.get_user_by_username(username)
+        if not existing or not existing.get("response"):
+            continue
+        user = existing["response"]
+        if isinstance(user, list):
+            user = user[0]
+        expire_at_str = user.get("expireAt")
+        if not expire_at_str:
+            continue
+        expire_at = datetime.fromisoformat(expire_at_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        if user.get("status") == "ACTIVE" and expire_at > now:
+            return True
+    return False
 
 
 @router.callback_query(F.data.startswith("trial_gift_"))

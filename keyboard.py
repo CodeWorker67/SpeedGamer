@@ -14,6 +14,8 @@ STYLE_PRIMARY = "primary"
 STYLE_SUCCESS = "success"
 STYLE_DANGER = "danger"
 
+OPEN_SITE_CB = "open_site"
+
 
 def create_kb(
     width: int,
@@ -123,6 +125,15 @@ def keyboard_start():
         buy_gift="🎁 Подарить подписку",
     )
     rows = list(markup.inline_keyboard)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="🌐 Наш сайт",
+                callback_data=OPEN_SITE_CB,
+                style=STYLE_PRIMARY,
+            )
+        ]
+    )
     rows.append(
         [
             InlineKeyboardButton(

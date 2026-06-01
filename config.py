@@ -44,8 +44,18 @@ PARTNER_SUPPORT_URL: str = (
     os.environ.get("PARTNER_SUPPORT_URL") or os.environ.get("SUPPORT_URL") or ""
 ).strip()
 
-# Web API (web_api.py): кастомная страница подписки + uvicorn в main
+# Web API (web_api.py): сайт + страница подписки + uvicorn в main
 WEB_API_PORT: int = int(os.environ.get("WEB_API_PORT", "8080"))
 SUB_PAGE_API_KEY: Optional[str] = (os.environ.get("SUB_PAGE_API_KEY") or "").strip() or None
 SUB_PAGE_CORS_ORIGINS: Optional[str] = os.environ.get("SUB_PAGE_CORS_ORIGINS")
+PUBLIC_SITE_URL: str = (os.environ.get("PUBLIC_SITE_URL") or "").strip().rstrip("/")
+SITE_URL: str = (os.environ.get("SITE_URL") or "").strip().rstrip("/")
+JWT_SECRET: Optional[str] = (os.environ.get("JWT_SECRET") or "").strip() or None
+GOOGLE_CLIENT_ID: Optional[str] = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip() or None
+PAYMENT_MAX_PENDING_PER_USER: int = int((os.environ.get("PAYMENT_MAX_PENDING_PER_USER") or "8").strip())
+SMTP_HOST: Optional[str] = (os.environ.get("SMTP_HOST") or "").strip() or None
+SMTP_PORT: int = int((os.environ.get("SMTP_PORT") or "587").strip())
+SMTP_USER: Optional[str] = (os.environ.get("SMTP_USER") or "").strip() or None
+SMTP_PASSWORD: Optional[str] = (os.environ.get("SMTP_PASSWORD") or "").strip() or None
+SMTP_FROM: Optional[str] = (os.environ.get("SMTP_FROM") or "").strip() or None
 

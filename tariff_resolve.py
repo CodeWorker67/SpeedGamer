@@ -24,6 +24,28 @@ def panel_username(user_id: int, *, white: bool, device_slots: int) -> str:
     return str(user_id)
 
 
+def panel_username_for_site_user(
+    db_user_id: int,
+    *,
+    white: bool,
+    device_slots: int = 5,
+) -> str:
+    """Username в панели для email-аккаунта (отрицательный user_id в БД)."""
+    n = int(db_user_id)
+    if n > 0:
+        return panel_username(n, white=white, device_slots=device_slots)
+    base = str(n)
+    if len(base) < 3:
+        base = f"n{n}"
+    if white:
+        return f"{base}_white"
+    if device_slots == 3:
+        return f"{base}_3"
+    if device_slots == 10:
+        return f"{base}_10"
+    return base
+
+
 def device_from_tariff_key(duration_key_plain: str) -> int:
     """
     Число устройств из ключа m{N}_d{D}; для legacy-ключей (30, 90, white_30, …) — DEFAULT_DEVICE_SLOTS.
