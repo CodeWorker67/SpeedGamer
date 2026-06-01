@@ -865,8 +865,8 @@ async def add_7_to_all_command(message: Message):
     n = len(user_ids)
     if not user_ids:
         await message.answer(
-            "Нет пользователей: is_delete=False, нет активной PRO-подписки "
-            "(3/5/10 устройств: даты пусты или истекли по UTC)."
+            "Нет пользователей: is_delete=False, нет PRO-подписки 3/5/10 "
+            "или все даты окончания не позже чем 2 дня назад (UTC)."
         )
         return
 
@@ -883,7 +883,7 @@ async def add_7_to_all_command(message: Message):
     )
     await message.answer(
         f"К получателям рассылки: {n} чел.\n"
-        f"(is_delete=False, нет активной PRO-подписки 3/5/10 по датам UTC).\n\n"
+        f"(is_delete=False; по каждому тарифу 3/5/10: нет подписки или окончание 2+ дня назад UTC).\n\n"
         f"Дальше бот пришлёт вам превью текста с кнопкой «🔥Получить ТРИАЛ» и запрос подтверждения.\n"
         f"Начисление +7 дней — только по нажатию:\n"
         f"• нет PRO-подписки → 7 дней на 5 устройств;\n"

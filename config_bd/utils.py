@@ -602,22 +602,23 @@ class AsyncSQL:
 
     async def SELECT_USER_IDS_NO_ACTIVE_PRO_SUBSCRIPTION(self) -> List[int]:
         """
-        Не удалены; нет активной PRO-подписки (3/5/10 устройств):
-        для каждого поля дата пуста или календарный день окончания (UTC) строго раньше сегодня UTC.
+        Не удалены; для каждого тарифа PRO (3/5/10 устройств):
+        дата пуста (нет подписки) или окончание не позже чем 2 календарных дня назад (UTC).
         """
         today_utc = datetime.now(timezone.utc).date()
+        cutoff = today_utc - timedelta(days=2)
 
-        def _tier_not_active(col):
-            return or_(col.is_(None), cast(col, Date) < today_utc)
+        def _tier_eligible(col):
+            return or_(col.is_(None), cast(col, Date) <= cutoff)
 
         async with self.session_factory() as session:
             stmt = (
                 select(Users.user_id)
                 .where(
                     Users.is_delete == False,
-                    _tier_not_active(Users.subscription_end_date),
-                    _tier_not_active(Users.subscription_3_end_date),
-                    _tier_not_active(Users.subscription_10_end_date),
+                    _tier_eligible(Users.subscription_end_date),
+                    _tier_eligible(Users.subscription_3_end_date),
+                    _tier_eligible(Users.subscription_10_end_date),
                 )
                 .order_by(Users.user_id)
             )
