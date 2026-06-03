@@ -1982,17 +1982,22 @@ class AsyncSQL:
                 t.subscription_end_date = _sum_subscription_end_dates(
                     t.subscription_end_date, e.subscription_end_date, merge_now
                 )
+                t.subscription_3_end_date = _sum_subscription_end_dates(
+                    t.subscription_3_end_date, e.subscription_3_end_date, merge_now
+                )
+                t.subscription_10_end_date = _sum_subscription_end_dates(
+                    t.subscription_10_end_date, e.subscription_10_end_date, merge_now
+                )
             else:
                 t.subscription_end_date = _max_subscription_end_dates(
                     t.subscription_end_date, e.subscription_end_date, merge_now
                 )
-
-            t.subscription_3_end_date = _max_subscription_end_dates(
-                t.subscription_3_end_date, e.subscription_3_end_date, merge_now
-            )
-            t.subscription_10_end_date = _max_subscription_end_dates(
-                t.subscription_10_end_date, e.subscription_10_end_date, merge_now
-            )
+                t.subscription_3_end_date = _max_subscription_end_dates(
+                    t.subscription_3_end_date, e.subscription_3_end_date, merge_now
+                )
+                t.subscription_10_end_date = _max_subscription_end_dates(
+                    t.subscription_10_end_date, e.subscription_10_end_date, merge_now
+                )
 
             if t_paid_white and e_paid_white:
                 t.white_subscription_end_date = _sum_subscription_end_dates(
