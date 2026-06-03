@@ -1,6 +1,6 @@
 import random
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Tuple
 
 from bot import sql, x3, bot
 from config import ADMIN_IDS, CHECKER_ID
@@ -12,6 +12,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command
 
 from sheduler.check_connect import check_connect
+from tariff_resolve import panel_username, panel_username_for_site_user
 from telegram_ids import is_telegram_chat_id
 
 router = Router()
@@ -33,6 +34,88 @@ _ADD7ALL_TRIAL_KB = create_kb(
     styles={"trial_return_get": STYLE_SUCCESS},
     trial_return_get="🔥Получить ТРИАЛ",
 )
+
+_ADD7SUB_PROMO_TEXT = (
+    "Уважаемые друзья!\n"
+    "Мы столкнулись с аварией в датацентре.\n"
+    "Проблема решена - бот снова заработал.\n"
+    "В качестве компенсации добавляем Вам 7 дней к подписке!🔥"
+)
+
+_ADD7SUB_CONNECT_KB = create_kb(
+    1,
+    styles={"connect_vpn": STYLE_PRIMARY},
+    connect_vpn="🔗 Подключить ВПН",
+)
+
+
+def _panel_username_for_user(user_id: int, device_slots: int) -> str:
+    if user_id > 0:
+        return panel_username(user_id, white=False, device_slots=device_slots)
+    return panel_username_for_site_user(user_id, white=False, device_slots=device_slots)
+
+
+def _add_days_to_subscription_end(
+    end_dt: datetime, now: datetime, days: int = 7
+) -> datetime:
+    if end_dt.tzinfo is None:
+        end_aware = end_dt.replace(tzinfo=timezone.utc)
+    else:
+        end_aware = end_dt.astimezone(timezone.utc)
+    now_utc = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    if end_aware <= now_utc:
+        return now_utc + timedelta(days=days)
+    return end_aware + timedelta(days=days)
+
+
+async def _extend_subscription_tier(
+    user_id: int,
+    device_slots: int,
+    db_end_date: datetime,
+    now: datetime,
+) -> bool:
+    """+7 дней к тарифу в панели и БД (по дате из БД, если клиента нет в панели)."""
+    username = _panel_username_for_user(user_id, device_slots)
+    panel_resp = await x3.get_user_by_username(username)
+    if panel_resp and panel_resp.get("response"):
+        return await x3.updateClient(7, username, user_id)
+
+    new_date = _add_days_to_subscription_end(db_end_date, now, 7)
+    hw_lim = device_slots if device_slots in (3, 10) else PRO_HWID_DEVICE_LIMIT
+    ok, actual = await x3.set_expiration_date(
+        username, new_date, user_id, hwid_device_limit=hw_lim
+    )
+    if not ok or actual is None:
+        return False
+    if device_slots == 3:
+        await sql.update_subscription_3_end_date(user_id, actual)
+    elif device_slots == 10:
+        await sql.update_subscription_10_end_date(user_id, actual)
+    else:
+        await sql.update_subscription_end_date(user_id, actual)
+    return True
+
+
+async def _add_7_sub_extend_user(user, now: datetime) -> Tuple[bool, bool]:
+    """
+    Продлевает все непустые PRO-даты пользователя.
+    Возвращает (успех по всем тарифам, были ли тарифы для продления).
+    """
+    tiers = []
+    if user.subscription_end_date is not None:
+        tiers.append((5, user.subscription_end_date))
+    if user.subscription_3_end_date is not None:
+        tiers.append((3, user.subscription_3_end_date))
+    if user.subscription_10_end_date is not None:
+        tiers.append((10, user.subscription_10_end_date))
+    if not tiers:
+        return False, False
+
+    all_ok = True
+    for device_slots, end_dt in tiers:
+        if not await _extend_subscription_tier(user.user_id, device_slots, end_dt, now):
+            all_ok = False
+    return all_ok, True
 
 
 @router.message(F.video, F.from_user.id.in_(ADMIN_IDS))
@@ -1006,4 +1089,103 @@ async def add_7_to_all_confirm(callback: CallbackQuery):
         f"• Отправлено: {sent}\n"
         f"• Ошибок: {failed}\n"
         f"• Пропущено (не Telegram chat_id): {skipped_non_tg}"
+    )
+
+
+@router.message(Command(commands=['add_7_sub']))
+async def add_7_sub_command(message: Message):
+    """
+    Компенсация +7 дней ко всем непустым PRO-подпискам (3/5/10) и рассылка.
+    Пользователи: in_panel=True, is_delete=False.
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    now = datetime.now(timezone.utc)
+    all_users = await sql.get_all_users()
+    candidates = [
+        u for u in all_users
+        if not u.is_delete and u.in_panel
+    ]
+    n = len(candidates)
+    if not candidates:
+        await message.answer(
+            "Нет пользователей: in_panel=True, is_delete=False."
+        )
+        return
+
+    await message.answer(
+        f"⏳ /add_7_sub: {n} пользователей (in_panel=True, is_delete=False)…"
+    )
+
+    admin_chat_id = message.chat.id
+    processed = 0
+    extended_ok = 0
+    msg_sent = 0
+    msg_failed = 0
+    skipped_no_subs = 0
+    extend_failed = 0
+    skipped_non_tg = 0
+
+    for user in candidates:
+        processed += 1
+        subs_ok, had_tiers = await _add_7_sub_extend_user(user, now)
+        if not had_tiers:
+            skipped_no_subs += 1
+        elif subs_ok:
+            extended_ok += 1
+            if is_telegram_chat_id(user.user_id):
+                try:
+                    await bot.send_message(
+                        user.user_id,
+                        _ADD7SUB_PROMO_TEXT,
+                        reply_markup=_ADD7SUB_CONNECT_KB,
+                    )
+                    msg_sent += 1
+                except Exception as e:
+                    msg_failed += 1
+                    logger.warning(
+                        "add_7_sub: не отправлено user_id=%s: %s",
+                        user.user_id,
+                        e,
+                    )
+            else:
+                skipped_non_tg += 1
+        else:
+            extend_failed += 1
+            logger.warning(
+                "add_7_sub: не удалось продлить подписки user_id=%s",
+                user.user_id,
+            )
+
+        if processed % 1000 == 0:
+            try:
+                await bot.send_message(
+                    admin_chat_id,
+                    (
+                        f"add_7_sub: обработано {processed} / {n}\n"
+                        f"• Продлено успешно: {extended_ok}\n"
+                        f"• Сообщений отправлено: {msg_sent}\n"
+                        f"• Ошибок продления: {extend_failed}\n"
+                        f"• Без дат подписки: {skipped_no_subs}"
+                    ),
+                )
+            except Exception as notify_err:
+                logger.warning(
+                    "add_7_sub: не удалось отправить прогресс админу: %s",
+                    notify_err,
+                )
+
+        await asyncio.sleep(0.05)
+
+    await message.answer(
+        "Готово (/add_7_sub).\n"
+        f"• Всего в выборке: {n}\n"
+        f"• Обработано: {processed}\n"
+        f"• Продлено успешно: {extended_ok}\n"
+        f"• Сообщений отправлено: {msg_sent}\n"
+        f"• Ошибок отправки: {msg_failed}\n"
+        f"• Ошибок продления: {extend_failed}\n"
+        f"• Без дат подписки (пропуск): {skipped_no_subs}\n"
+        f"• Не Telegram chat_id (продлено, без сообщения): {skipped_non_tg}"
     )
