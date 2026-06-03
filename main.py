@@ -22,6 +22,7 @@ from handlers import handlers_user, handlers_statistic, handlers_admin, handlers
 from sheduler.time_mes import send_message_cron
 from logging_config import logger
 from sheduler.time_mes_not_sub import send_push_cron
+from sheduler.backup_db import send_db_backup_cron
 from web_api import app as web_app
 
 
@@ -63,6 +64,15 @@ async def main() -> None:
     scheduler.add_job(check_cryptobot_payments, trigger='interval', minutes=1, misfire_grace_time=10)
     scheduler.add_job(send_push_cron, trigger='interval', minutes=30, misfire_grace_time=60)
     scheduler.add_job(check_online_daily, 'cron', hour=2, minute=55, id='daily_online_stats', misfire_grace_time=60)
+    scheduler.add_job(
+        send_db_backup_cron,
+        trigger='interval',
+        minutes=30,
+        args=[bot],
+        id='db_backup_checker',
+        max_instances=1,
+        misfire_grace_time=300,
+    )
     scheduler.start()
 
     await set_commands(bot)
