@@ -67,7 +67,7 @@ async def main() -> None:
     scheduler.add_job(
         send_db_backup_cron,
         trigger='interval',
-        minutes=1,
+        minutes=30,
         args=[bot],
         id='db_backup_checker',
         max_instances=30,
