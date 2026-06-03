@@ -125,7 +125,7 @@ def keyboard_start():
         buy_gift="🎁 Подарить подписку",
     )
     rows = list(markup.inline_keyboard)
-    rows.append(
+    # rows.append(
     #     [
     #         InlineKeyboardButton(
     #             text="🌐 Наш сайт",
