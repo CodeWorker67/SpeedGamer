@@ -49,6 +49,7 @@ from config import (
     SUB_PAGE_API_KEY,
     TG_TOKEN,
 )
+from unisender_go import send_transactional_email, unisender_go_configured
 from config_bd.models import create_tables
 from config_bd.utils import user_row_to_api_dict
 from keyboard import keyboard_payment_stars
@@ -450,12 +451,11 @@ def _random_reset_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
-def _send_smtp_reset_email(to_email: str, code: str) -> None:
+def _send_smtp_email(to_email: str, subject: str, body: str) -> None:
     if not SMTP_HOST or not SMTP_FROM:
         raise RuntimeError("SMTP not configured")
-    body = f"Код для сброса пароля: {code}\n\nЕсли вы не запрашивали сброс, проигнорируйте письмо."
     msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = "Сброс пароля — ВПН ДЛЯ СВОИХ"
+    msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -463,6 +463,27 @@ def _send_smtp_reset_email(to_email: str, code: str) -> None:
             s.starttls()
             s.login(SMTP_USER, SMTP_PASSWORD)
         s.send_message(msg)
+
+
+async def _deliver_plain_email(to_email: str, subject: str, body: str) -> bool:
+    """Unisender Go API (приоритет) или SMTP. True — письмо отправлено."""
+    if unisender_go_configured():
+        try:
+            await send_transactional_email(
+                to_email=to_email,
+                subject=subject,
+                plaintext=body,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Unisender Go email failed: {}", e)
+    if SMTP_HOST and SMTP_FROM:
+        try:
+            await asyncio.to_thread(_send_smtp_email, to_email, subject, body)
+            return True
+        except Exception as e:
+            logger.warning("SMTP email failed: {}", e)
+    return False
 
 
 sub_page_api_key_header = APIKeyHeader(
@@ -567,12 +588,12 @@ class ChangePasswordIn(BaseModel):
 async def _deliver_reset_code(email: str, code: str, row: tuple) -> None:
     tg = _telegram_id_from_row(row)
     smtp_ok = False
-    if SMTP_HOST and SMTP_FROM:
-        try:
-            await asyncio.to_thread(_send_smtp_reset_email, email, code)
-            smtp_ok = True
-        except Exception as e:
-            logger.warning("SMTP password reset failed: {}", e)
+    if unisender_go_configured() or (SMTP_HOST and SMTP_FROM):
+        smtp_ok = await _deliver_plain_email(
+            email,
+            "Сброс пароля — ВПН ДЛЯ СВОИХ",
+            f"Код для сброса пароля: {code}\n\nЕсли вы не запрашивали сброс, проигнорируйте письмо.",
+        )
     if not smtp_ok and tg is not None:
         try:
             await bot.send_message(tg, f"Код сброса пароля: {code}")
@@ -594,30 +615,18 @@ async def _bot_deeplink_for_sub_page() -> str:
     return "https://t.me/"
 
 
-def _send_smtp_verification_email(to_email: str, code: str) -> None:
-    if not SMTP_HOST or not SMTP_FROM:
-        raise RuntimeError("SMTP not configured")
-    body = f"Ваш код подтверждения: {code}\n\nКод действителен 15 минут."
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = "Подтверждение email — ВПН ДЛЯ СВОИХ"
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_email
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-        if SMTP_USER and SMTP_PASSWORD:
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASSWORD)
-        s.send_message(msg)
-
-
 async def _send_verification_code(email: str) -> str:
     code = _random_reset_code()
     expires = datetime.now(timezone.utc) + timedelta(minutes=15)
     activation_value = f"{code}:{int(expires.timestamp())}"
     await sql.set_activation_pass_by_email(email, activation_value)
-    try:
-        await asyncio.to_thread(_send_smtp_verification_email, email, code)
-    except Exception as e:
-        logger.warning("SMTP verification email failed: {}", e)
+    body = f"Ваш код подтверждения: {code}\n\nКод действителен 15 минут."
+    if not await _deliver_plain_email(
+        email,
+        "Подтверждение email — ВПН ДЛЯ СВОИХ",
+        body,
+    ):
+        logger.warning("Verification email not delivered for {}", email)
     return code
 
 

@@ -59,3 +59,10 @@ SMTP_USER: Optional[str] = (os.environ.get("SMTP_USER") or "").strip() or None
 SMTP_PASSWORD: Optional[str] = (os.environ.get("SMTP_PASSWORD") or "").strip() or None
 SMTP_FROM: Optional[str] = (os.environ.get("SMTP_FROM") or "").strip() or None
 
+# Unisender Go (HTTPS вместо SMTP): https://godocs.unisender.ru/web-api-ref
+UNISENDER_GO_API_KEY: Optional[str] = (os.environ.get("UNISENDER_GO_API_KEY") or "").strip() or None
+UNISENDER_GO_API_URL: str = (
+    os.environ.get("UNISENDER_GO_API_URL") or "https://go1.unisender.ru/ru/transactional/api/v1"
+).strip().rstrip("/")
+UNISENDER_GO_FROM_NAME: str = (os.environ.get("UNISENDER_GO_FROM_NAME") or "ВПН ДЛЯ СВОИХ").strip()
+
