@@ -10,8 +10,9 @@ from config_bd.models import AsyncSessionLocal, Users, Payments, Gifts, Payments
     WhiteCounter, PaymentsCards, PaymentsPlategaCrypto, PaymentsWataSBP, PaymentsWataCard, PaymentsFkSBP, \
     LinkingCodes, PasswordResetCodes
 from sqlalchemy.exc import IntegrityError
-from lexicon import PAYMENT_MINOR_THRESHOLD_RUB
+from lexicon import PAYMENT_MINOR_THRESHOLD_RUB, dct_price
 from logging_config import logger
+from tariff_resolve import tariff_days_for_x3
 
 _CRYPTO_TARIFF_RUB = {
     'TON': {
@@ -44,6 +45,58 @@ _MERGE_PAYMENT_MODELS = (
     PaymentsStars,
     PaymentsCryptobot,
 )
+
+
+def _payload_duration_to_panel_days(raw: Optional[str]) -> Optional[int]:
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if s == "30secret":
+        return 30
+    try:
+        v = int(s)
+        return v if v > 0 else None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return tariff_days_for_x3(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _white_days_from_amount_fallback(amount: Any) -> Optional[int]:
+    try:
+        target = int(round(float(amount)))
+    except (TypeError, ValueError):
+        return None
+    for key, price in dct_price.items():
+        if "white" not in key:
+            continue
+        if int(price) != target:
+            continue
+        if key == "white_30":
+            return 30
+    return None
+
+
+def _billing_duration_from_amount_fallback(amount: Any) -> Optional[int]:
+    try:
+        target = int(round(float(amount)))
+    except (TypeError, ValueError):
+        return None
+    if target == 1:
+        return None
+    candidates: list[int] = []
+    for key, price in dct_price.items():
+        if "white" in key:
+            continue
+        try:
+            if int(price) != target:
+                continue
+            candidates.append(tariff_days_for_x3(key))
+        except (TypeError, ValueError):
+            continue
+    return max(candidates) if candidates else None
 
 
 def _norm_email(email: str) -> str:
@@ -1845,6 +1898,155 @@ class AsyncSQL:
             )
             result = await session.execute(stmt)
             return [row[0] for row in result.all()]
+
+    async def get_user_subscription_payment_report(
+        self, user_id: int
+    ) -> List[Tuple[datetime, str, str]]:
+        """
+        Успешные платежи пользователя (confirmed/paid) по всем таблицам оплат.
+        Возвращает список (time_created UTC naive, тип подписки, кол-во дней как строка).
+        """
+        rows_acc: List[Tuple[datetime, str, str]] = []
+
+        def _parse_map(payload: Optional[str]) -> Dict[str, str]:
+            if not payload:
+                return {}
+            out: Dict[str, str] = {}
+            for part in payload.split(","):
+                if ":" not in part:
+                    continue
+                k, _, v = part.partition(":")
+                out[k.strip()] = v.strip()
+            return out
+
+        def _row_kind_and_days(
+            payload: Optional[str], is_gift: bool, amount: Any
+        ) -> Tuple[str, str]:
+            m = _parse_map(payload)
+            white = m.get("white", "False").lower() == "true"
+            gift = bool(is_gift) or m.get("gift", "False").lower() == "true"
+            dur = _payload_duration_to_panel_days(m.get("duration"))
+            if dur is None:
+                try:
+                    amt_f = float(amount)
+                except (TypeError, ValueError):
+                    amt_f = None
+                if amt_f is not None:
+                    if white:
+                        dur = _white_days_from_amount_fallback(amt_f)
+                    else:
+                        dur = _billing_duration_from_amount_fallback(amt_f)
+
+            if gift and white:
+                label = "Подарок, вайт (mobile)"
+            elif gift:
+                label = "Подарок, обычная"
+            elif white:
+                label = "Вайт (mobile)"
+            else:
+                label = "Обычная"
+
+            device_raw = m.get("device")
+            try:
+                device_n = int(device_raw) if device_raw is not None else None
+            except (TypeError, ValueError):
+                device_n = None
+            if device_n in (3, 5, 10):
+                label = f"{label}, {device_n} устр."
+
+            days_s = str(dur) if dur is not None else "—"
+            return label, days_s
+
+        async with self.session_factory() as session:
+            queries: List[Any] = [
+                select(
+                    Payments.user_id,
+                    Payments.time_created,
+                    Payments.amount,
+                    Payments.payload,
+                    Payments.is_gift,
+                ).where(
+                    Payments.user_id == user_id,
+                    Payments.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsCards.user_id,
+                    PaymentsCards.time_created,
+                    PaymentsCards.amount,
+                    PaymentsCards.payload,
+                    PaymentsCards.is_gift,
+                ).where(
+                    PaymentsCards.user_id == user_id,
+                    PaymentsCards.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsPlategaCrypto.user_id,
+                    PaymentsPlategaCrypto.time_created,
+                    PaymentsPlategaCrypto.amount,
+                    PaymentsPlategaCrypto.payload,
+                    PaymentsPlategaCrypto.is_gift,
+                ).where(
+                    PaymentsPlategaCrypto.user_id == user_id,
+                    PaymentsPlategaCrypto.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsStars.user_id,
+                    PaymentsStars.time_created,
+                    PaymentsStars.amount,
+                    PaymentsStars.payload,
+                    PaymentsStars.is_gift,
+                ).where(
+                    PaymentsStars.user_id == user_id,
+                    PaymentsStars.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsCryptobot.user_id,
+                    PaymentsCryptobot.time_created,
+                    PaymentsCryptobot.amount,
+                    PaymentsCryptobot.payload,
+                    PaymentsCryptobot.is_gift,
+                ).where(
+                    PaymentsCryptobot.user_id == user_id,
+                    PaymentsCryptobot.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsFkSBP.user_id,
+                    PaymentsFkSBP.time_created,
+                    PaymentsFkSBP.amount,
+                    PaymentsFkSBP.payload,
+                    PaymentsFkSBP.is_gift,
+                ).where(
+                    PaymentsFkSBP.user_id == user_id,
+                    PaymentsFkSBP.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsWataSBP.user_id,
+                    PaymentsWataSBP.time_created,
+                    PaymentsWataSBP.amount,
+                    PaymentsWataSBP.payload,
+                    PaymentsWataSBP.is_gift,
+                ).where(
+                    PaymentsWataSBP.user_id == user_id,
+                    PaymentsWataSBP.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsWataCard.user_id,
+                    PaymentsWataCard.time_created,
+                    PaymentsWataCard.amount,
+                    PaymentsWataCard.payload,
+                    PaymentsWataCard.is_gift,
+                ).where(
+                    PaymentsWataCard.user_id == user_id,
+                    PaymentsWataCard.status.in_(_BILLING_OK_STATUSES),
+                ),
+            ]
+            for q in queries:
+                for _uid, tc, amt, pl, ig in (await session.execute(q)).all():
+                    kind, days_s = _row_kind_and_days(pl, bool(ig), amt)
+                    rows_acc.append((tc, kind, days_s))
+
+        rows_acc.sort(key=lambda x: (x[0], x[1]))
+        return rows_acc
 
     async def next_negative_user_id(self) -> int:
         async with self.session_factory() as session:

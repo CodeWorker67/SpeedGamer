@@ -17,6 +17,25 @@ STYLE_DANGER = "danger"
 OPEN_SITE_CB = "open_site"
 
 
+def keyboard_push_buy_reviews() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🛒 Купить подписку",
+                callback_data="buy_vpn",
+                style=STYLE_SUCCESS,
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📋 Отзывы",
+                url=REVIEWS_URL,
+                style=STYLE_PRIMARY,
+            ),
+        ],
+    ])
+
+
 def create_kb(
     width: int,
     *,
@@ -51,6 +70,25 @@ def create_kb(
 
     kb_builder.row(*buttons, width=width)
     return kb_builder.as_markup()
+
+
+def keyboard_push_buy_reviews() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🛒 Купить подписку",
+                callback_data="buy_vpn",
+                style=STYLE_SUCCESS,
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📋 Отзывы",
+                url=REVIEWS_URL,
+                style=STYLE_PRIMARY,
+            ),
+        ],
+    ])
 
 
 def chanel_keyboard():

@@ -19,6 +19,54 @@ router = Router()
 
 PRO_HWID_DEVICE_LIMIT = 5
 
+_MSK = timezone(timedelta(hours=3))
+
+
+def _msk_dt_str(dt: Optional[datetime]) -> str:
+    if dt is None:
+        return "Нет"
+    if dt.tzinfo is None:
+        aware = dt.replace(tzinfo=timezone.utc)
+    else:
+        aware = dt.astimezone(timezone.utc)
+    return aware.astimezone(_MSK).strftime("%d-%m-%Y %H:%M МСК")
+
+
+def _panel_sub_line(activ_result: dict) -> str:
+    t = activ_result.get("time", "-")
+    if t in (None, "", "-"):
+        return "Нет"
+    return str(t)
+
+
+def _split_long_text(text: str, limit: int = 3800) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    parts: list[str] = []
+    rest = text
+    while rest:
+        parts.append(rest[:limit])
+        rest = rest[limit:]
+    return parts
+
+
+def _panel_usernames_by_device(user) -> dict[int, str]:
+    tg = None
+    if user.user_id is not None and int(user.user_id) > 0:
+        tg = int(user.user_id)
+    elif user.linked_telegram_id is not None and int(user.linked_telegram_id) > 0:
+        tg = int(user.linked_telegram_id)
+
+    out: dict[int, str] = {}
+    for device_slots in (3, 5, 10):
+        if tg is not None:
+            out[device_slots] = panel_username(tg, white=False, device_slots=device_slots)
+        else:
+            out[device_slots] = panel_username_for_site_user(
+                int(user.user_id), white=False, device_slots=device_slots
+            )
+    return out
+
 _ADD7ALL_PREVIEW_CB = "add7all_preview"
 _ADD7ALL_YES_CB = "add7all_yes"
 _ADD7ALL_NO_CB = "add7all_no"
@@ -262,6 +310,73 @@ async def user_info(message: Message):
         await message.answer(text)
     except Exception as e:
         await message.answer(f'Ошибка при формировании сообщения: {str(e)}')
+
+
+@router.message(Command(commands=['pay']))
+async def pay_info_command(message: Message):
+    """Сводка подписок (БД / панель) по тарифам 3/5/10 устройств и успешные платежи."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    args = (message.text or "").split()
+    if len(args) < 2:
+        await message.answer("❌ Использование: /pay <telegram_id>\nНапример: /pay 123456789")
+        return
+
+    try:
+        target_id = int(args[1].strip())
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+        return
+
+    user = await sql.get_user_object_by_user_id(target_id)
+    if not user:
+        await message.answer(f"❌ Пользователь {target_id} не найден в базе данных.")
+        return
+
+    usernames = _panel_usernames_by_device(user)
+    panel_lines: dict[int, str] = {}
+    for device_slots in (3, 5, 10):
+        try:
+            ar = await x3.activ(usernames[device_slots])
+            panel_lines[device_slots] = _panel_sub_line(ar)
+        except Exception as e:
+            logger.exception("/pay: панель %s устройств", device_slots)
+            panel_lines[device_slots] = f"Ошибка: {e}"
+
+    db_dates = {
+        3: user.subscription_3_end_date,
+        5: user.subscription_end_date,
+        10: user.subscription_10_end_date,
+    }
+
+    pay_rows = await sql.get_user_subscription_payment_report(target_id)
+    pay_lines: list[str] = []
+    for tc, kind, days_s in pay_rows:
+        if tc.tzinfo is None:
+            tc_aware = tc.replace(tzinfo=timezone.utc)
+        else:
+            tc_aware = tc.astimezone(timezone.utc)
+        ts = tc_aware.astimezone(_MSK).strftime("%d-%m-%Y %H:%M МСК")
+        pay_lines.append(f"• {ts} — {kind} — {days_s} дн.")
+
+    body = (
+        f"<b>/pay {target_id}</b>\n\n"
+        f"Подписка в БД бота 3 устройства — {_msk_dt_str(db_dates[3])}\n"
+        f"Подписка в панели — 3 устройства — {panel_lines[3]}\n"
+        f"Подписка в БД бота 5 устройства — {_msk_dt_str(db_dates[5])}\n"
+        f"Подписка в панели — 5 устройства — {panel_lines[5]}\n"
+        f"Подписка в БД бота 10 устройства — {_msk_dt_str(db_dates[10])}\n"
+        f"Подписка в панели — 10 устройства — {panel_lines[10]}\n\n"
+        f"<b>Платежи:</b>\n"
+    )
+    if pay_lines:
+        body += "\n".join(pay_lines)
+    else:
+        body += "Нет"
+
+    for chunk in _split_long_text(body):
+        await message.answer(chunk)
 
 
 @router.message(Command(commands=['sub']))
