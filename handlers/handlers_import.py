@@ -3,7 +3,7 @@ import urllib.parse
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InputMediaPhoto
 
-from bot import sql, x3
+from bot import x3
 from keyboard import (
     keyboard_import_os,
     keyboard_import_app,
@@ -108,15 +108,9 @@ async def import_select_app(callback: CallbackQuery):
 )
 async def import_select_sub(callback: CallbackQuery):
     await callback.answer()
-    user_data = await sql.get_user(callback.from_user.id)
-    has_casual = has_white = False
-    if user_data:
-        if user_data[9]:
-            has_casual = True
-        if user_data[10]:
-            has_white = True
+    links = await x3.active_subscription_links(callback.from_user.id)
 
-    if not has_casual and not has_white:
+    if not links:
         await callback.message.answer(
             text=lexicon['no_sub'],
             reply_markup=create_kb(1, back_to_main='🔙 Назад')
@@ -125,24 +119,26 @@ async def import_select_sub(callback: CallbackQuery):
 
     await callback.message.answer(
         text=lexicon['import_select_sub'],
-        reply_markup=keyboard_import_sub(callback.data, has_casual, has_white)
+        reply_markup=keyboard_import_sub(callback.data, links)
     )
 
 
 @router.callback_query(
-    F.data.startswith('import_') &
-    (F.data.endswith('_casual') | F.data.endswith('_white'))
+    F.data.regexp(r'^import_(android|ios|windows|macos)_(happ|v2)_sub_(main|3|10|white)$')
 )
 async def import_end(callback: CallbackQuery):
     await callback.answer()
-    user_id = str(callback.from_user.id)
+    parts = callback.data.split('_')
+    os_key = parts[1]
+    app_key = parts[2]
+    slot_key = parts[4]
 
-    if callback.data.endswith('_white'):
-        sub_url = await x3.sublink(user_id + '_white')
-        label = '🦾 Включи мобильный интернет'
-    else:
-        sub_url = await x3.sublink(user_id)
-        label = '💫 ВПН ДЛЯ СВОИХ PRO'
+    username = x3.username_for_slot(callback.from_user.id, slot_key)
+    sub_url = await x3.sublink(username)
+    label = next(
+        (slot_label for key, _suffix, slot_label in x3.SUBSCRIPTION_SLOTS if key == slot_key),
+        '💫 Ваша подписка ВПН',
+    )
 
     if not sub_url:
         await callback.message.answer(
@@ -150,10 +146,6 @@ async def import_end(callback: CallbackQuery):
             reply_markup=create_kb(1, back_to_main='🔙 Назад')
         )
         return
-
-    parts = callback.data.split('_')
-    os_key = parts[1]
-    app_key = parts[2]
 
     urls = IMPORT_URLS[os_key][app_key]
     url_app = urls['url_app']

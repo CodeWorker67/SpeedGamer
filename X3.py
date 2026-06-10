@@ -377,25 +377,34 @@ class X3:
             logger.error(f"Ошибка при получении ссылки для {user_id}: {e}")
         return ""
 
-    async def active_subscription_links(self, telegram_id: int) -> List[Tuple[str, str]]:
+    SUBSCRIPTION_SLOTS: Tuple[Tuple[str, str, str], ...] = (
+        ("main", "", "💫 Подписка · 5 устройств"),
+        ("3", "_3", "💫 Подписка · 3 устройства"),
+        ("10", "_10", "💫 Подписка · 10 устройств"),
+        ("white", "_white", "🦾 Мобильный тариф"),
+    )
+
+    def username_for_slot(self, telegram_id: int, slot_key: str) -> str:
+        for key, suffix, _ in self.SUBSCRIPTION_SLOTS:
+            if key == slot_key:
+                return f"{telegram_id}{suffix}"
+        return str(telegram_id)
+
+    async def active_subscription_links(self, telegram_id: int) -> List[Tuple[str, str, str]]:
         """
         Все активные (не истёкшие) клиенты в панели для данного Telegram ID:
         отдельная запись на каждый слот — id, id_3, id_10, id_white.
+        Возвращает (подпись кнопки, url, ключ слота).
         """
-        slots: Tuple[Tuple[str, str], ...] = (
-            (str(telegram_id), "💫 Подписка · 5 устройств"),
-            (f"{telegram_id}_3", "💫 Подписка · 3 устройства"),
-            (f"{telegram_id}_10", "💫 Подписка · 10 устройств"),
-            (f"{telegram_id}_white", "🦾 Мобильный тариф"),
-        )
-        out: List[Tuple[str, str]] = []
-        for username, label in slots:
+        out: List[Tuple[str, str, str]] = []
+        for slot_key, suffix, label in self.SUBSCRIPTION_SLOTS:
+            username = f"{telegram_id}{suffix}"
             st = await self.activ(username)
             if not st.get("activ", "").startswith("✅"):
                 continue
             url = await self.sublink(username)
             if url:
-                out.append((label, url))
+                out.append((label, url, slot_key))
         return out
 
     async def activ(self, user_id: str):

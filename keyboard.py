@@ -260,12 +260,12 @@ def keyboard_gift_duration(devices: int) -> InlineKeyboardMarkup:
     return create_kb(1, styles=_styles_gift_duration(devices), **kwargs)
 
 
-def keyboard_subscription(links: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+def keyboard_subscription(links: list[tuple[str, str, str]]) -> InlineKeyboardMarkup:
     """
-    links: (текст кнопки, https-ссылка на подписку). Только по активным слотам из панели.
+    links: (текст кнопки, https-ссылка на подписку, ключ слота). Только по активным слотам из панели.
     """
     buttons = []
-    for text, url in links:
+    for text, url, _slot in links:
         if not url:
             continue
         buttons.append(
@@ -329,24 +329,14 @@ def keyboard_import_app(os_callback: str):
     )
 
 
-def keyboard_import_sub(app_callback: str, has_casual: bool, has_white: bool):
+def keyboard_import_sub(app_callback: str, links: list[tuple[str, str, str]]):
     buttons = []
-    if has_casual:
+    for label, _url, slot_key in links:
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text="💫 Ваша подписка ВПН",
-                    callback_data=f"{app_callback}_casual",
-                    style=STYLE_PRIMARY,
-                )
-            ]
-        )
-    if has_white:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text="🦾 Включи мобильную связь",
-                    callback_data=f"{app_callback}_white",
+                    text=label[:64],
+                    callback_data=f"{app_callback}_sub_{slot_key}",
                     style=STYLE_PRIMARY,
                 )
             ]
