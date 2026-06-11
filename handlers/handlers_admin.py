@@ -103,6 +103,63 @@ def _panel_username_for_user(user_id: int, device_slots: int) -> str:
     return panel_username_for_site_user(user_id, white=False, device_slots=device_slots)
 
 
+def _hwid_limit_for_panel_username(username: str) -> int:
+    if "white" in username:
+        return 1
+    if username.endswith("_3"):
+        return 3
+    if username.endswith("_10"):
+        return 10
+    return PRO_HWID_DEVICE_LIMIT
+
+
+def _sub_tier_label(username: str) -> str:
+    if "white" in username:
+        return "white (мобильный)"
+    if username.endswith("_3"):
+        return "3 устройства"
+    if username.endswith("_10"):
+        return "10 устройств"
+    return "5 устройств"
+
+
+def _parse_sub_command(args: list) -> Optional[Tuple[int, str, str]]:
+    """
+    Разбор /sub → (telegram_id, username в панели, date_str).
+    Поддерживает: id, id_3, id_10, id_white и legacy «id white <дата>».
+    """
+    if len(args) < 3:
+        return None
+
+    raw = args[1].strip()
+
+    if args[2].lower() == "white":
+        user_id = int(raw)
+        username = panel_username(user_id, white=True, device_slots=5)
+        date_str = " ".join(args[3:])
+        if not date_str:
+            return None
+        return user_id, username, date_str
+
+    if raw.endswith("_white"):
+        user_id = int(raw[:-6])
+        username = panel_username(user_id, white=True, device_slots=5)
+    elif raw.endswith("_10"):
+        user_id = int(raw[:-3])
+        username = panel_username(user_id, white=False, device_slots=10)
+    elif raw.endswith("_3"):
+        user_id = int(raw[:-2])
+        username = panel_username(user_id, white=False, device_slots=3)
+    else:
+        user_id = int(raw)
+        username = panel_username(user_id, white=False, device_slots=5)
+
+    date_str = " ".join(args[2:])
+    if not date_str:
+        return None
+    return user_id, username, date_str
+
+
 def _add_days_to_subscription_end(
     end_dt: datetime, now: datetime, days: int = 7
 ) -> datetime:
@@ -381,47 +438,44 @@ async def pay_info_command(message: Message):
 
 @router.message(Command(commands=['sub']))
 async def set_subscription_date(message: Message):
-    """Установка subscription_end_date или white_subscription_end_date в БД и панели"""
+    """Установка даты подписки в панели и БД (5 / 3 / 10 устройств, white)."""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда доступна только администраторам.")
         return
 
     try:
         args = message.text.split()
-        if len(args) < 3:
+        parsed = _parse_sub_command(args)
+        if parsed is None:
             await message.answer(
                 "❌ Использование:\n"
-                "  /sub <telegram_id> <дата_время>               – обновить обычную подписку\n"
-                "  /sub <telegram_id> white <дата_время>         – обновить белую подписку\n"
+                "  /sub <telegram_id> <дата_время>             – подписка на 5 устройств\n"
+                "  /sub <telegram_id>_3 <дата_время>           – подписка на 3 устройства\n"
+                "  /sub <telegram_id>_10 <дата_время>          – подписка на 10 устройств\n"
+                "  /sub <telegram_id>_white <дата_время>       – мобильный тариф\n"
+                "  /sub <telegram_id> white <дата_время>       – мобильный тариф (старый формат)\n"
                 "Примеры:\n"
                 "  /sub 123456789 2026-02-01 17:14:27\n"
-                "  /sub 123456789 white 2026-02-01 17:14:27\n"
+                "  /sub 123456789_3 2026-02-01 17:14:27\n"
+                "  /sub 123456789_10 2026-02-01 17:14:27\n"
+                "  /sub 123456789_white 2026-02-01 17:14:27\n"
                 "Формат даты: YYYY-MM-DD HH:MM:SS"
             )
             return
 
-        user_id = int(args[1].strip())
+        user_id, username, date_str = parsed
 
-        # Определяем тип и позицию даты
-        if args[2].lower() == 'white':
-            is_white = True
-            date_str = " ".join(args[3:])
-        else:
-            is_white = False
-            date_str = " ".join(args[2:])
-
-        # Парсим дату
         date_formats = [
             "%Y-%m-%d %H:%M:%S",
             "%Y-%m-%d %H:%M",
             "%d.%m.%Y %H:%M:%S",
-            "%d.%m.%Y %H:%M"
+            "%d.%m.%Y %H:%M",
         ]
         target_date = None
         for fmt in date_formats:
             try:
                 target_date = datetime.strptime(date_str, fmt)
-                target_date = target_date.replace(tzinfo=timezone.utc)  # панель работает в UTC
+                target_date = target_date.replace(tzinfo=timezone.utc)
                 break
             except ValueError:
                 continue
@@ -429,35 +483,29 @@ async def set_subscription_date(message: Message):
             await message.answer(f"❌ Неверный формат даты: {date_str}")
             return
 
-        # Проверяем наличие пользователя в БД
         user_data = await sql.get_user(user_id)
         if not user_data:
             await message.answer("⚠️ Пользователь не найден в БД.")
             return
 
-        # Формируем username для панели
-        username = str(user_id) + ('_white' if is_white else '')
-
-        # Устанавливаем дату в панели
-        hw_lim = PRO_HWID_DEVICE_LIMIT
-        success, actual_date = await x3.set_expiration_date(username, target_date, user_id, hwid_device_limit=hw_lim)
+        hw_lim = _hwid_limit_for_panel_username(username)
+        success, actual_date = await x3.set_expiration_date(
+            username, target_date, user_id, hwid_device_limit=hw_lim
+        )
 
         if not success or actual_date is None:
             await message.answer("❌ Не удалось установить дату в панели. Подробности в логах.")
             return
 
-        if is_white:
-            await sql.update_white_subscription_end_date(user_id, actual_date)
-        else:
-            await sql.update_subscription_end_date(user_id, actual_date)
+        await x3._persist_subscription_db(sql, user_id, username, actual_date)
 
-        # Сообщаем результат
         await message.answer(
             f"✅ Дата подписки успешно установлена!\n\n"
             f"👤 Пользователь: {user_id}\n"
+            f"🔑 Клиент в панели: {username}\n"
             f"📅 Целевая дата (UTC): {target_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"📅 Установленная в панели дата (UTC): {actual_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"📝 Тип: {'white' if is_white else 'обычная'}\n"
+            f"📝 Тариф: {_sub_tier_label(username)}\n"
             f"💾 База данных обновлена."
         )
 
