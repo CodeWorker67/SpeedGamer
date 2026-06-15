@@ -4,7 +4,8 @@ from typing import Optional, Tuple
 
 from bot import sql, x3, bot
 from config import ADMIN_IDS, CHECKER_ID
-from keyboard import create_kb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER
+from keyboard import create_kb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER, keyboard_sub_after_buy
+from lexicon import lexicon
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
@@ -135,51 +136,31 @@ def _hwid_limit_for_panel_username(username: str) -> int:
     return PRO_HWID_DEVICE_LIMIT
 
 
-def _sub_tier_label(username: str) -> str:
-    if "white" in username:
-        return "white (мобильный)"
-    if username.endswith("_3"):
-        return "3 устройства"
-    if username.endswith("_10"):
-        return "10 устройств"
-    return "5 устройств"
-
-
-def _parse_sub_command(args: list) -> Optional[Tuple[int, str, str]]:
+def _parse_sub_target(raw: str) -> tuple[int, str, str]:
     """
-    Разбор /sub → (telegram_id, username в панели, date_str).
-    Поддерживает: id, id_3, id_10, id_white и legacy «id white <дата>».
+    Разбор цели /sub: telegram_id, username в панели, метка тарифа.
+    Примеры: 123456789 → 5 устр.; 123456789_3; 123456789_10; 123456789_white.
     """
-    if len(args) < 3:
-        return None
-
-    raw = args[1].strip()
-
-    if args[2].lower() == "white":
-        user_id = int(raw)
-        username = panel_username(user_id, white=True, device_slots=5)
-        date_str = " ".join(args[3:])
-        if not date_str:
-            return None
-        return user_id, username, date_str
-
+    raw = raw.strip()
     if raw.endswith("_white"):
-        user_id = int(raw[:-6])
-        username = panel_username(user_id, white=True, device_slots=5)
-    elif raw.endswith("_10"):
-        user_id = int(raw[:-3])
-        username = panel_username(user_id, white=False, device_slots=10)
-    elif raw.endswith("_3"):
-        user_id = int(raw[:-2])
-        username = panel_username(user_id, white=False, device_slots=3)
-    else:
-        user_id = int(raw)
-        username = panel_username(user_id, white=False, device_slots=5)
+        tg_id = int(raw[:-6])
+        return tg_id, raw, "white"
+    if raw.endswith("_10"):
+        tg_id = int(raw[:-3])
+        return tg_id, raw, "10"
+    if raw.endswith("_3"):
+        tg_id = int(raw[:-2])
+        return tg_id, raw, "3"
+    tg_id = int(raw)
+    return tg_id, str(tg_id), "5"
 
-    date_str = " ".join(args[2:])
-    if not date_str:
-        return None
-    return user_id, username, date_str
+
+_SUB_TIER_LABELS = {
+    "5": "5 устройств",
+    "3": "3 устройства",
+    "10": "10 устройств",
+    "white": "мобильный (white)",
+}
 
 
 def _add_days_to_subscription_end(
@@ -456,32 +437,37 @@ async def pay_info_command(message: Message):
 
 @router.message(Command(commands=['sub']))
 async def set_subscription_date(message: Message):
-    """Установка даты подписки в панели и БД (5 / 3 / 10 устройств, white)."""
+    """Установка даты подписки в панели и в БД по слоту тарифа (5 / 3 / 10 / white)."""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда доступна только администраторам.")
         return
 
     try:
         args = message.text.split()
-        parsed = _parse_sub_command(args)
-        if parsed is None:
+        if len(args) < 3:
             await message.answer(
                 "❌ Использование:\n"
-                "  /sub <telegram_id> <дата_время>             – подписка на 5 устройств\n"
-                "  /sub <telegram_id>_3 <дата_время>           – подписка на 3 устройства\n"
-                "  /sub <telegram_id>_10 <дата_время>          – подписка на 10 устройств\n"
-                "  /sub <telegram_id>_white <дата_время>       – мобильный тариф\n"
-                "  /sub <telegram_id> white <дата_время>       – мобильный тариф (старый формат)\n"
+                "  /sub <telegram_id> <дата_время>         – подписка 5 устройств\n"
+                "  /sub <telegram_id>_3 <дата_время>       – подписка 3 устройства\n"
+                "  /sub <telegram_id>_10 <дата_время>      – подписка 10 устройств\n"
+                "  /sub <telegram_id>_white <дата_время>   – мобильный тариф\n"
                 "Примеры:\n"
                 "  /sub 123456789 2026-02-01 17:14:27\n"
                 "  /sub 123456789_3 2026-02-01 17:14:27\n"
                 "  /sub 123456789_10 2026-02-01 17:14:27\n"
-                "  /sub 123456789_white 2026-02-01 17:14:27\n"
                 "Формат даты: YYYY-MM-DD HH:MM:SS"
             )
             return
 
-        user_id, username, date_str = parsed
+        try:
+            user_id, username, tier = _parse_sub_target(args[1])
+        except ValueError:
+            await message.answer(
+                "❌ Неверный идентификатор. Используйте telegram_id или telegram_id_3 / _10 / _white."
+            )
+            return
+
+        date_str = " ".join(args[2:])
 
         date_formats = [
             "%Y-%m-%d %H:%M:%S",
@@ -507,24 +493,63 @@ async def set_subscription_date(message: Message):
             return
 
         hw_lim = _hwid_limit_for_panel_username(username)
-        success, actual_date = await x3.set_expiration_date(
-            username, target_date, user_id, hwid_device_limit=hw_lim
-        )
+        try:
+            success, actual_date = await x3.set_expiration_date(
+                username, target_date, user_id, hwid_device_limit=hw_lim
+            )
+        except Exception as e:
+            logger.exception("Ошибка в команде /sub при обращении к панели")
+            await message.answer(
+                f"❌ Ошибка при обращении к панели VPN: {e}\n"
+                "Проверьте доступность панели (PANEL_URL) и повторите команду."
+            )
+            return
 
         if not success or actual_date is None:
-            await message.answer("❌ Не удалось установить дату в панели. Подробности в логах.")
+            panel_ok = await x3.test_connect()
+            hint = (
+                "Панель VPN не отвечает — проверьте PANEL_URL и доступность сервера."
+                if not panel_ok
+                else "Пользователь не найден и не удалось создать, либо панель вернула ошибку."
+            )
+            await message.answer(
+                f"❌ Не удалось установить дату в панели.\n{hint}\nПодробности в логах."
+            )
             return
 
         await x3._persist_subscription_db(sql, user_id, username, actual_date)
 
+        notify_status = ""
+        if is_telegram_chat_id(user_id):
+            try:
+                sub_link = await x3.sublink(username)
+                user_text = lexicon["sub_granted_notify"].format(
+                    tier=_SUB_TIER_LABELS.get(tier, tier),
+                    end_date=_msk_dt_str(actual_date),
+                )
+                await bot.send_message(
+                    user_id,
+                    user_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=keyboard_sub_after_buy(sub_link) if sub_link else None,
+                )
+                notify_status = "\n📨 Пользователь уведомлён."
+            except Exception as e:
+                logger.error(f"/sub: не удалось уведомить user={user_id}: {e}")
+                notify_status = f"\n⚠️ Не удалось уведомить пользователя: {e}"
+        else:
+            notify_status = "\nℹ️ Уведомление не отправлено (не Telegram ID)."
+
         await message.answer(
             f"✅ Дата подписки успешно установлена!\n\n"
             f"👤 Пользователь: {user_id}\n"
-            f"🔑 Клиент в панели: {username}\n"
+            f"🔑 Панель: {username}\n"
             f"📅 Целевая дата (UTC): {target_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"📅 Установленная в панели дата (UTC): {actual_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"📝 Тариф: {_sub_tier_label(username)}\n"
+            f"📝 Тариф: {_SUB_TIER_LABELS.get(tier, tier)}\n"
             f"💾 База данных обновлена."
+            f"{notify_status}"
         )
 
     except Exception as e:
