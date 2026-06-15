@@ -446,7 +446,7 @@ class X3:
         lst_users = []
         try:
             users_all = []
-            for i in range(100):
+            for i in range(200):
                 data = await self.list(1000 * i + 1)
                 if data['response']['users']:
                     users_all.extend(data['response']['users'])
@@ -470,7 +470,7 @@ class X3:
         """
         users_all = []
         try:
-            for i in range(100):  # максимум 50 страниц
+            for i in range(200):  # максимум 50 страниц
                 data = await self.list(1000 * i + 1)
                 if data['response']['users']:
                     users_all.extend(data['response']['users'])
@@ -530,7 +530,7 @@ class X3:
         lst_users = []
         try:
             users_all = []
-            for i in range(100):  # максимум 100 страниц
+            for i in range(200):  # максимум 100 страниц
                 data = await self.list(1000 * i + 1)
                 if data['response']['users']:
                     users_all.extend(data['response']['users'])

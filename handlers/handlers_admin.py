@@ -32,6 +32,28 @@ def _msk_dt_str(dt: Optional[datetime]) -> str:
     return aware.astimezone(_MSK).strftime("%d-%m-%Y %H:%M МСК")
 
 
+def _pay_dt_str(dt: Optional[datetime]) -> str:
+    """Формат даты для /pay: YYYY-MM-DD HH:MM:SS (МСК)."""
+    if dt is None:
+        return "Нет"
+    if dt.tzinfo is None:
+        aware = dt.replace(tzinfo=timezone.utc)
+    else:
+        aware = dt.astimezone(timezone.utc)
+    return aware.astimezone(_MSK).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _pay_panel_sub_line(activ_result: dict) -> str:
+    t = activ_result.get("time", "-")
+    if t in (None, "", "-"):
+        return "Нет"
+    try:
+        parsed = datetime.strptime(str(t).replace(" МСК", "").strip(), "%d-%m-%Y %H:%M")
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return str(t)
+
+
 def _panel_sub_line(activ_result: dict) -> str:
     t = activ_result.get("time", "-")
     if t in (None, "", "-"):
@@ -396,7 +418,7 @@ async def pay_info_command(message: Message):
     for device_slots in (3, 5, 10):
         try:
             ar = await x3.activ(usernames[device_slots])
-            panel_lines[device_slots] = _panel_sub_line(ar)
+            panel_lines[device_slots] = _pay_panel_sub_line(ar)
         except Exception as e:
             logger.exception("/pay: панель %s устройств", device_slots)
             panel_lines[device_slots] = f"Ошибка: {e}"
@@ -410,20 +432,16 @@ async def pay_info_command(message: Message):
     pay_rows = await sql.get_user_subscription_payment_report(target_id)
     pay_lines: list[str] = []
     for tc, kind, days_s in pay_rows:
-        if tc.tzinfo is None:
-            tc_aware = tc.replace(tzinfo=timezone.utc)
-        else:
-            tc_aware = tc.astimezone(timezone.utc)
-        ts = tc_aware.astimezone(_MSK).strftime("%d-%m-%Y %H:%M МСК")
+        ts = _pay_dt_str(tc)
         pay_lines.append(f"• {ts} — {kind} — {days_s} дн.")
 
     body = (
         f"<b>/pay {target_id}</b>\n\n"
-        f"Подписка в БД бота 3 устройства — {_msk_dt_str(db_dates[3])}\n"
+        f"Подписка в БД бота 3 устройства — {_pay_dt_str(db_dates[3])}\n"
         f"Подписка в панели — 3 устройства — {panel_lines[3]}\n"
-        f"Подписка в БД бота 5 устройства — {_msk_dt_str(db_dates[5])}\n"
+        f"Подписка в БД бота 5 устройства — {_pay_dt_str(db_dates[5])}\n"
         f"Подписка в панели — 5 устройства — {panel_lines[5]}\n"
-        f"Подписка в БД бота 10 устройства — {_msk_dt_str(db_dates[10])}\n"
+        f"Подписка в БД бота 10 устройства — {_pay_dt_str(db_dates[10])}\n"
         f"Подписка в панели — 10 устройства — {panel_lines[10]}\n\n"
         f"<b>Платежи:</b>\n"
     )

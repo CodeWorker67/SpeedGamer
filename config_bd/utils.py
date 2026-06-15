@@ -1919,12 +1919,32 @@ class AsyncSQL:
                 out[k.strip()] = v.strip()
             return out
 
+        def _device_slots_from_payload(m: Dict[str, str]) -> int:
+            raw = m.get("device")
+            if raw is None:
+                return 5
+            try:
+                n = int(raw)
+            except (TypeError, ValueError):
+                return 5
+            if n in (3, 5, 10):
+                return n
+            return 5
+
+        def _device_tariff_label(device_slots: int) -> str:
+            if device_slots == 3:
+                return "3 устройства"
+            if device_slots == 10:
+                return "10 устройств"
+            return "5 устройств"
+
         def _row_kind_and_days(
             payload: Optional[str], is_gift: bool, amount: Any
         ) -> Tuple[str, str]:
             m = _parse_map(payload)
             white = m.get("white", "False").lower() == "true"
             gift = bool(is_gift) or m.get("gift", "False").lower() == "true"
+            device_slots = _device_slots_from_payload(m)
             dur = _payload_duration_to_panel_days(m.get("duration"))
             if dur is None:
                 try:
@@ -1937,22 +1957,15 @@ class AsyncSQL:
                     else:
                         dur = _billing_duration_from_amount_fallback(amt_f)
 
+            tariff = _device_tariff_label(device_slots)
             if gift and white:
                 label = "Подарок, вайт (mobile)"
             elif gift:
-                label = "Подарок, обычная"
+                label = f"Подарок, {tariff}"
             elif white:
                 label = "Вайт (mobile)"
             else:
-                label = "Обычная"
-
-            device_raw = m.get("device")
-            try:
-                device_n = int(device_raw) if device_raw is not None else None
-            except (TypeError, ValueError):
-                device_n = None
-            if device_n in (3, 5, 10):
-                label = f"{label}, {device_n} устр."
+                label = tariff
 
             days_s = str(dur) if dur is not None else "—"
             return label, days_s
