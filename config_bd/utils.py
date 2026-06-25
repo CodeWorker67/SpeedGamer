@@ -195,6 +195,18 @@ def user_has_active_pro_subscription(user: Users) -> bool:
     )
 
 
+def user_leading_subscription_end_date(user: Users) -> Optional[datetime]:
+    """Самая поздняя дата окончания среди всех подписок (main, 3, 10, white)."""
+    candidates = (
+        user.subscription_end_date,
+        user.subscription_3_end_date,
+        user.subscription_10_end_date,
+        user.white_subscription_end_date,
+    )
+    non_none = [d for d in candidates if d is not None]
+    return max(non_none) if non_none else None
+
+
 def resolve_trial_device_slots(user: Users) -> int:
     """
     Слот для +7 дней триала:

@@ -568,13 +568,32 @@ def keyboard_devices_list(
             [
                 InlineKeyboardButton(
                     text=btn_text[:64],
-                    callback_data=f"dev_rm_{slot_key}_{idx}",
+                    callback_data=f"dev_pick_{slot_key}_{idx}",
                     style=STYLE_DANGER,
                 )
             ]
         )
     buttons.append([InlineKeyboardButton(text=BTN_BACK, callback_data="dev_back_subs")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def keyboard_device_delete_confirm(slot_key: str, device_idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Да, удалить",
+                    callback_data=f"dev_rm_{slot_key}_{device_idx}",
+                    style=STYLE_DANGER,
+                ),
+                InlineKeyboardButton(
+                    text="❌ Нет",
+                    callback_data=f"dev_cancel_{slot_key}",
+                    style=STYLE_PRIMARY,
+                ),
+            ],
+        ]
+    )
 
 
 def keyboard_partner_intro():

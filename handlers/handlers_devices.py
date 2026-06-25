@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from bot import x3
 from keyboard import (
     BTN_BACK,
+    keyboard_device_delete_confirm,
     keyboard_devices_list,
     keyboard_devices_subscriptions,
     keyboard_start,
@@ -20,10 +21,12 @@ from logging_config import logger
 router = Router()
 
 _DEV_SUB_RE = re.compile(r"^dev_sub_(main|3|10|white)$")
+_DEV_PICK_RE = re.compile(r"^dev_pick_(main|3|10|white)_(\d+)$")
 _DEV_RM_RE = re.compile(r"^dev_rm_(main|3|10|white)_(\d+)$")
+_DEV_CANCEL_RE = re.compile(r"^dev_cancel_(main|3|10|white)$")
 
 
-def _device_button_label(device: dict[str, Any]) -> str:
+def _device_display_name(device: dict[str, Any]) -> str:
     model = (device.get("deviceModel") or "").strip()
     platform = (device.get("platform") or "").strip()
     os_version = (device.get("osVersion") or "").strip()
@@ -41,7 +44,21 @@ def _device_button_label(device: dict[str, Any]) -> str:
     if os_version:
         name = f"{name} {os_version}"
 
-    return f"📱 {name}"[:64]
+    return name[:64]
+
+
+def _device_button_label(device: dict[str, Any]) -> str:
+    return f"📱 {_device_display_name(device)}"[:64]
+
+
+def _device_delete_confirm_text(label: str, device_name: str) -> str:
+    return (
+        f"📱 <b>Удаление устройства</b>\n"
+        f"<b>{escape(label)}</b>\n\n"
+        f"Вы точно хотите удалить <b>{escape(device_name)}</b> из подписки?\n\n"
+        f"<i>❗️ Не забудьте удалить подписку из приложения на этом устройстве — "
+        f"иначе в течение часа оно может снова появиться в личном кабинете.</i>"
+    )
 
 
 def _device_line(device: dict[str, Any], index: int) -> str:
@@ -103,7 +120,10 @@ async def _devices_screen_text(
             lines.append(_device_line(device, idx))
 
     lines.append("")
-    lines.append("Выберите устройство для удаления (❗️❗️❗️ обязательно удалите подписку из приложения на старом устройстве иначе в течении часа старое устройство повторно добавится в личный кабинет):")
+    lines.append(
+        "Выберите устройство для удаления (❗️❗️❗️ обязательно удалите подписку из приложения "
+        "на старом устройстве иначе в течении часа старое устройство повторно добавится в личный кабинет):"
+    )
 
     btn_rows = [
         (idx, _device_button_label(device))
@@ -194,6 +214,49 @@ async def devices_pick_subscription(callback: CallbackQuery) -> None:
     await callback.answer()
     slot_key = callback.data.removeprefix("dev_sub_")
     await _show_devices(callback, slot_key)
+
+
+@router.callback_query(F.data.regexp(_DEV_PICK_RE))
+async def devices_pick_device(callback: CallbackQuery) -> None:
+    match = _DEV_PICK_RE.match(callback.data or "")
+    if not match:
+        await callback.answer()
+        return
+
+    slot_key, idx_str = match.groups()
+    device_idx = int(idx_str)
+
+    ctx = await _slot_context(callback.from_user.id, slot_key)
+    if not ctx:
+        await callback.answer("Подписка не найдена или истекла", show_alert=True)
+        await _show_subscriptions(callback)
+        return
+
+    label, user_uuid, _username = ctx
+    devices, _total = await x3.get_user_hwid_devices(user_uuid)
+
+    if device_idx < 0 or device_idx >= len(devices):
+        await callback.answer("Устройство уже удалено", show_alert=True)
+        await _show_devices(callback, slot_key)
+        return
+
+    await callback.answer()
+    device_name = _device_display_name(devices[device_idx])
+    await callback.message.edit_text(
+        text=_device_delete_confirm_text(label, device_name),
+        reply_markup=keyboard_device_delete_confirm(slot_key, device_idx),
+    )
+
+
+@router.callback_query(F.data.regexp(_DEV_CANCEL_RE))
+async def devices_delete_cancel(callback: CallbackQuery) -> None:
+    match = _DEV_CANCEL_RE.match(callback.data or "")
+    if not match:
+        await callback.answer()
+        return
+
+    await callback.answer()
+    await _show_devices(callback, match.group(1))
 
 
 @router.callback_query(F.data.regexp(_DEV_RM_RE))
