@@ -716,10 +716,10 @@ class AsyncSQL:
 
     async def select_rows_for_subscription_expiry_push(
         self, now_utc_naive: datetime, window: timedelta
-    ) -> List[Tuple[int, datetime, bool, Optional[str], str]]:
+    ) -> List[Tuple[int, datetime, bool, Optional[str], Optional[str], str]]:
         """
         Строки для sheduler.time_mes: user_id, дата окончания ведущей подписки,
-        reserve_field, field_str_1, tier ('main'|'3'|'10'|'white').
+        in_panel, ttclid, field_str_1, tier ('main'|'3'|'10'|'white').
 
         Ведущая подписка — с самой поздней датой окончания среди непустых полей
         subscription_end_date, subscription_3_end_date, subscription_10_end_date,
@@ -752,6 +752,11 @@ class AsyncSQL:
             )
             active_cond = or_(active_7, active_3, active_1, active_h)
 
+            post_second = and_(
+                col <= now,
+                col > now - timedelta(days=7) - w,
+                col <= now - timedelta(days=7),
+            )
             post_pn = []
             for n in range(1, 201):
                 d = timedelta(days=3 * n)
@@ -762,7 +767,7 @@ class AsyncSQL:
                         col <= now - d,
                     )
                 )
-            expired_cond = or_(*post_pn)
+            expired_cond = or_(post_second, *post_pn)
             return or_(active_cond, expired_cond)
 
         s_main = (
@@ -833,7 +838,8 @@ class AsyncSQL:
             select(
                 Users.user_id,
                 best.c.end_dt,
-                Users.reserve_field,
+                Users.in_panel,
+                Users.ttclid,
                 Users.field_str_1,
                 best.c.tier,
             )
@@ -843,11 +849,11 @@ class AsyncSQL:
             .order_by(Users.user_id)
         )
 
-        rows_out: List[Tuple[int, datetime, bool, Optional[str], str]] = []
+        rows_out: List[Tuple[int, datetime, bool, Optional[str], Optional[str], str]] = []
         async with self.session_factory() as session:
             result = await session.execute(stmt)
             for r in result.all():
-                rows_out.append((r[0], r[1], bool(r[2]), r[3], r[4]))
+                rows_out.append((r[0], r[1], bool(r[2]), r[3], r[4], r[5]))
 
         return rows_out
 
