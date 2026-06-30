@@ -175,6 +175,7 @@ SUB_PAGE_PAYLOAD_SOURCE = SUBPAGE
 
 # Индексы в tuple из config_bd.utils._user_tuple
 _U_USER_ID = 1
+_U_STAMP = 14
 _U_EMAIL = 18
 _U_ACTIVATION = 20
 _U_EMAIL_VERIFIED = 24
@@ -543,9 +544,25 @@ class SubPagePayIn(BaseModel):
     duration: DurationId
 
 
+_STAMP_RE = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
+
+
+def _normalize_stamp(raw: Optional[str]) -> str:
+    """Маркетинговая метка источника; без метки или при невалидном значении — 'email'."""
+    if not raw or not str(raw).strip():
+        return "email"
+    s = str(raw).strip().lower()
+    if s == "email":
+        return "email"
+    if _STAMP_RE.fullmatch(s):
+        return s
+    return "email"
+
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=256)
+    stamp: Optional[str] = None
 
 
 class LoginIn(BaseModel):
@@ -564,6 +581,7 @@ class ResendCodeIn(BaseModel):
 
 class GoogleAuthIn(BaseModel):
     credential: str
+    stamp: Optional[str] = None
 
 
 class ResetPasswordIn(BaseModel):
@@ -749,14 +767,19 @@ async def auth_telegram(body: TelegramAuthIn, request: Request):
 async def auth_register(body: RegisterIn, request: Request):
     client_ip = _client_ip_for_rate_limit(request)
     _rate_limit_or_raise(client_ip, "register", max_req=5, window=300)
+    stamp = _normalize_stamp(body.stamp)
     existing = await sql.get_user_by_email(str(body.email))
     if existing:
         if bool(existing[_U_EMAIL_VERIFIED]):
             raise HTTPException(status.HTTP_409_CONFLICT, "Email уже зарегистрирован")
+        if stamp != "email":
+            current_stamp = (existing[_U_STAMP] or "").strip()
+            if not current_stamp or current_stamp == "email":
+                await sql.set_user_stamp_by_internal_id(int(existing[0]), stamp)
         await _send_verification_code(str(body.email))
         return {"success": True, "requires_verification": True, "email": str(body.email).strip().lower()}
     h = _hash_password(body.password)
-    await sql.register_email_user(str(body.email), h)
+    await sql.register_email_user(str(body.email), h, stamp=stamp)
     em = str(body.email).strip().lower()
     await _send_verification_code(em)
     return {"success": True, "requires_verification": True, "email": em}
@@ -822,8 +845,9 @@ async def auth_google(body: GoogleAuthIn, request: Request):
     em = google_email.strip().lower()
     row = await sql.get_user_by_email(em)
     if row is None:
+        stamp = _normalize_stamp(body.stamp)
         h = _hash_password(secrets.token_hex(32))
-        internal_id = await sql.register_email_user(em, h)
+        internal_id = await sql.register_email_user(em, h, stamp=stamp)
         await sql.set_email_verified(internal_id, True)
     else:
         internal_id = int(row[0])
