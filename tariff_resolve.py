@@ -24,6 +24,18 @@ def panel_username(user_id: int, *, white: bool, device_slots: int) -> str:
     return str(user_id)
 
 
+def gift_panel_username(gift_num: int, *, white: bool, device_slots: int) -> str:
+    """Username в панели для веб-подарка: gift_N, gift_N_3, gift_N_10, gift_N_white."""
+    base = f"gift_{gift_num}"
+    if white:
+        return f"{base}_white"
+    if device_slots == 3:
+        return f"{base}_3"
+    if device_slots == 10:
+        return f"{base}_10"
+    return base
+
+
 def panel_username_for_site_user(
     db_user_id: int,
     *,
