@@ -68,6 +68,6 @@ UNISENDER_GO_FROM_NAME: str = (os.environ.get("UNISENDER_GO_FROM_NAME") or "ВП
 
 # file_id картинки для рассылки /discount_push (Telegram photo file_id)
 DISCOUNT_PUSH_PHOTO_ID: Optional[str] = (
-    os.environ.get("DISCOUNT_PUSH_PHOTO_ID") or "AgACAgQAAxkBAAIIhGpMdWCO6GOWd1kv83nqncZF9yKIAAJJDmsbiY1hUuSGQyobjPCRAQADAgADeQADPAQ"
+    os.environ.get("DISCOUNT_PUSH_PHOTO_ID") or "AgACAgQAAxkBAAFj4t5qTpNpDIRFKtILZSX_BOolGn1TnAACkA9rG_5XeFIVI5xMAAHuFWABAAMCAAN5AAM8BA"
 ).strip() or None
 
