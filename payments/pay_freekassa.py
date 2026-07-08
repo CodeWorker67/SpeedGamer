@@ -154,6 +154,7 @@ async def pay(
     device: int,
     ui_kind: UiKind,
     source: Optional[str] = None,
+    payload_suffix: str = "",
 ) -> Dict[str, Any]:
     if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
         logger.error("FreeKassa: не заданы API_FREEKASSA или SHOP_ID_FREEKASSA")
@@ -167,6 +168,7 @@ async def pay(
     )
     if source:
         payload = f"{payload},source:{source}"
+    payload += payload_suffix
     fk = FreekassaPayment(API_FREEKASSA, SHOP_ID_FREEKASSA)
     nonce = await sql.alloc_fk_api_nonce()
     payment_id = f"fk{user_id}n{nonce}"

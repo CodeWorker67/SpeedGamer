@@ -359,7 +359,7 @@ lexicon = {
     ''',
 
     'push_not_subscribed_day4_0h': '''
-🚀Вам доступен пробный доступ на лучший ВПН! Активировать в два клика 👇
+🚀Скорее покупайте подписку на лучший ВПН! Активировать в два клика 👇
     ''',
 
     'push_not_subscribed_day5_0h': '''
@@ -599,6 +599,79 @@ def payment_tariff_summary_pro(desc_key: str) -> str:
 
     return (
         f'Тариф — 💫 {dev_phrase}\n'
+        f'5 серверов на выбор.\n'
+        f'{dev_phrase}, безлимитный трафик.\n'
+        f'{dur_line}\n'
+        f'\n'
+        f'Сумма к оплате - {price}₽'
+    )
+
+
+_DISCOUNT_DEVICE_PREFIX = {3: '🔹', 5: '🔸', 10: '🏆'}
+_DISCOUNT_DEVICE_LABEL = {3: '3️⃣ устройства', 5: '5️⃣ устройств', 10: '🔟 устройств'}
+
+dct_price_discount_33: dict[str, int] = {
+    f'm{months}_d{devices}': int(dct_price[f'm{months}_d{devices}'] * 0.67)
+    for devices in (3, 5, 10)
+    for months in (1, 3, 6, 12)
+}
+
+
+def discount_savings_pct(months: int, devices: int) -> int | None:
+    """Выгода % относительно оплаты по месячному тарифу без скидки."""
+    if months <= 1:
+        return None
+    m1_price = dct_price[f'm1_d{devices}']
+    disc_price = dct_price_discount_33[f'm{months}_d{devices}']
+    full = m1_price * months
+    return round((1 - disc_price / full) * 100)
+
+
+def discount_duration_button_text(months: int, devices: int) -> str:
+    key = f'm{months}_d{devices}'
+    price = dct_price_discount_33[key]
+    prefix = _DISCOUNT_DEVICE_PREFIX[devices]
+    dev_label = _DISCOUNT_DEVICE_LABEL[devices]
+    savings = discount_savings_pct(months, devices)
+    base = f'{prefix} {months} мес - {dev_label} - {price} ₽'
+    if savings:
+        return f'{base} (выгода -{savings}%)'
+    return base
+
+
+def discount_tariff_payment_caption(desc_key: str) -> str:
+    from tariff_resolve import device_from_tariff_key
+
+    m = re.fullmatch(r'm(\d+)_d(\d+)', desc_key)
+    if not m:
+        return 'Выберите способ оплаты:'
+    months = int(m.group(1))
+    devices = device_from_tariff_key(desc_key)
+    price = dct_price_discount_33[desc_key]
+    dev_phrase = _ru_device_phrase(devices)
+    dur_line = _ru_month_duration_line(months).replace('Длительность - ', '')
+    return (
+        f'Вы выбрали тариф на <b>{dev_phrase}</b> длительностью <b>{dur_line}</b> '
+        f'с <b>персональной скидкой 33%</b> всего за <b>{price} ₽</b>.\n\n'
+        'Выберите способ оплаты:'
+    )
+
+
+def discount_payment_summary(desc_key: str) -> str:
+    from tariff_resolve import device_from_tariff_key
+
+    price = dct_price_discount_33.get(desc_key)
+    if price is None:
+        return lexicon['payment_link']
+    devices = device_from_tariff_key(desc_key)
+    dev_phrase = _ru_device_phrase(devices)
+    m = re.fullmatch(r'm(\d+)_d(\d+)', desc_key)
+    if m:
+        dur_line = _ru_month_duration_line(int(m.group(1)))
+    else:
+        dur_line = ''
+    return (
+        f'Тариф — 💫 {dev_phrase} (скидка 33%)\n'
         f'5 серверов на выбор.\n'
         f'{dev_phrase}, безлимитный трафик.\n'
         f'{dur_line}\n'

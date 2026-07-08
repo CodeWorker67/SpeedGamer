@@ -8,6 +8,7 @@ from lead_tracker import post_payment_success
 from keyboard import create_kb, keyboard_sub_after_buy, BTN_BACK
 from lexicon import lexicon
 from logging_config import logger
+from payments.payload_parse import parse_payment_payload
 from tariff_resolve import panel_username
 
 REFERRER_REF_BONUS_DAYS = 7
@@ -68,8 +69,8 @@ async def _credit_partner_commission(payer_uid: int, method: str, amount: int | 
 async def process_confirmed_payment(payload) -> bool:
     """Обработка подтвержденного платежа. True — подписка/подарок применены успешно."""
     try:
-        # Парсим payload
-        payload_parts = dict(item.split(':') for item in payload.split(','))
+        # Парсим payload (поддержка флагов без значения, напр. ,discount)
+        payload_parts = parse_payment_payload(payload)
         user_id = int(payload_parts.get('user_id', 0))
         duration = int(payload_parts.get('duration', 0))
         white_flag = payload_parts.get('white', 'False') == 'True'

@@ -66,3 +66,8 @@ UNISENDER_GO_API_URL: str = (
 ).strip().rstrip("/")
 UNISENDER_GO_FROM_NAME: str = (os.environ.get("UNISENDER_GO_FROM_NAME") or "ВПН ДЛЯ СВОИХ").strip()
 
+# file_id картинки для рассылки /discount_push (Telegram photo file_id)
+DISCOUNT_PUSH_PHOTO_ID: Optional[str] = (
+    os.environ.get("DISCOUNT_PUSH_PHOTO_ID") or "AgACAgQAAxkBAAIIhGpMdWCO6GOWd1kv83nqncZF9yKIAAJJDmsbiY1hUuSGQyobjPCRAQADAgADeQADPAQ"
+).strip() or None
+

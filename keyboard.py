@@ -644,3 +644,100 @@ def keyboard_partner_withdraw(support_url: str):
             )
         ],
     ])
+
+
+def keyboard_discount_push_reveal() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🎁 Узнать награду",
+                callback_data="dpush_reveal",
+                style=STYLE_PRIMARY,
+            )
+        ],
+    ])
+
+
+def keyboard_discount_push_buy() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⚡ Купить со скидкой",
+                callback_data="dpush_buy",
+                style=STYLE_PRIMARY,
+            )
+        ],
+    ])
+
+
+def keyboard_discount_push_device_tier() -> InlineKeyboardMarkup:
+    return create_kb(
+        1,
+        styles={
+            "dpush_tier_3": STYLE_PRIMARY,
+            "dpush_tier_5": STYLE_PRIMARY,
+            "dpush_tier_10": STYLE_SUCCESS,
+        },
+        dpush_tier_3="🔹 Тарифы на 3️⃣ устройства",
+        dpush_tier_5="🔸 Тарифы на 5️⃣ устройств",
+        dpush_tier_10="🏆 Тарифы на 🔟 устройств",
+    )
+
+
+def _styles_discount_push_duration(devices: int) -> dict[str, str]:
+    st: dict[str, str] = {"dpush_back_tier": STYLE_PRIMARY}
+    for months in (1, 3, 6, 12):
+        key = f"dpush_tariff_m{months}_d{devices}"
+        st[key] = STYLE_SUCCESS if months >= 6 else STYLE_PRIMARY
+    return st
+
+
+def keyboard_discount_push_duration(devices: int) -> InlineKeyboardMarkup:
+    from lexicon import discount_duration_button_text
+
+    kwargs: dict[str, str] = {}
+    for months in (1, 3, 6, 12):
+        ck = f"dpush_tariff_m{months}_d{devices}"
+        kwargs[ck] = discount_duration_button_text(months, devices)
+    kwargs["dpush_back_tier"] = BTN_BACK
+    return create_kb(1, styles=_styles_discount_push_duration(devices), **kwargs)
+
+
+def keyboard_discount_push_payment(desc_key: str) -> InlineKeyboardMarkup:
+    devices = int(desc_key.rsplit("_d", 1)[-1])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⚡ СБП",
+                callback_data=f"dpush_fk_sbp_{desc_key}",
+                style=STYLE_SUCCESS,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💳 Карта РФ",
+                callback_data=f"dpush_fk_card_{desc_key}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⭐️ Telegram Stars",
+                callback_data=f"dpush_stars_{desc_key}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💎 Crypto bot",
+                callback_data=f"dpush_crypto_{desc_key}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=BTN_BACK,
+                callback_data=f"dpush_back_dur_{devices}",
+            )
+        ],
+    ])

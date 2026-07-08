@@ -246,10 +246,9 @@ def _max_subscription_end_dates(
 def _payload_white_flag(payload: Optional[str]) -> bool:
     if not payload or not str(payload).strip():
         return False
-    try:
-        parts = dict(item.split(":", 1) for item in str(payload).split(","))
-    except ValueError:
-        return False
+    from payments.payload_parse import parse_payment_payload
+
+    parts = parse_payment_payload(str(payload))
     return parts.get("white", "False") == "True"
 
 

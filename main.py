@@ -18,7 +18,7 @@ from sheduler.check_online import check_online_daily
 from sheduler.check_fk import check_fk
 from sheduler.check_wata_sbp import check_wata_sbp
 from sheduler.check_wata_card import check_wata_card
-from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices
+from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_discount_push
 from sheduler.time_mes import send_message_cron
 from logging_config import logger
 from sheduler.time_mes_not_sub import send_push_cron
@@ -40,6 +40,7 @@ async def main() -> None:
     # Инициализация диспетчера
     dp: Dispatcher = Dispatcher()
     dp.include_router(handlers_broadcast.router)
+    dp.include_router(handlers_discount_push.router)
     dp.include_router(handlers_admin.router)
     dp.include_router(handlers_user.router)
     dp.include_router(handlers_devices.router)
