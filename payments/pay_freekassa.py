@@ -280,7 +280,7 @@ async def pay_site(
         return {"status": "error", "url": "", "id": ""}
 
     if billing_user_id in ADMIN_IDS:
-        val = "1"
+        val = "10" if str(duration).startswith("traffic") else "1"
 
     pm = _payload_method(kind)
     gift_str = "True" if is_gift else "False"

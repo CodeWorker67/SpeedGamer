@@ -75,6 +75,7 @@ CUSTOM_PRESETS = [
     ("connect_vpn", "🔗 Подключить ВПН", STYLE_PRIMARY),
     ("ref", "👥 Рефералка", STYLE_PRIMARY),
     ("buy_gift", "🎁 Подарить подписку", STYLE_SUCCESS),
+    ("user_profile", "👤 Профиль", STYLE_PRIMARY),
     ("ref_invite", "Пригласить друзей🫶", STYLE_SUCCESS),
     ("buy_tier_3", "🔹 Тарифы на 3️⃣ устройства", STYLE_PRIMARY),
     ("buy_tier_5", "🔸 Тарифы на 5️⃣ устройств", STYLE_PRIMARY),

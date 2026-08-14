@@ -62,6 +62,8 @@ lexicon = {
 
     'payment_link': _PAYMENT_PRO_HEAD + _PAYMENT_PRO_5_LINE,
 
+    'wl_bonus_line': '\n\n📡 Антиглушилка: <b>+{gb:g} GB</b> трафика включено в тариф.',
+
     'payment_link_white': 'Тариф — 🦾 Включи мобильную связь\n'
                           'Удобен для мобильного интернета: мессенджеры, соцсети, потоковое видео (YouTube и др.).\n'
                           'Подходит для 1 устройства 📱\n\n'
@@ -182,6 +184,70 @@ lexicon = {
                        "<code>{5}</code>\n\n"
                        "Также вы можете сделать подарок родным и близким —\n"
                        "нажмите кнопку 🎁 Подарить подписку",
+
+    'user_profile': (
+        '👤 <b>Ваш профиль</b>\n\n'
+        '📅 Подписка активна до: <b>{sub_end}</b>\n\n'
+        '📡 <b>Антиглушилка</b>\n'
+        '├ Лимит: <b>{limit_gb:.2f} GB</b>\n'
+        '├ Использовано: <b>{used_gb:.2f} GB</b>\n'
+        '└ Осталось: <b>{remaining_gb:.2f} GB</b>'
+    ),
+
+    'wl_limit_exceeded': (
+        "📡 <b>Лимит трафика «Антиглушилка» исчерпан</b>\n\n"
+        "├ Лимит: <b>{limit_gb:.2f} GB</b>\n"
+        "├ Использовано: <b>{used_gb:.2f} GB</b>\n\n"
+        "Сервер <b>Антиглушилка</b> временно недоступен — превышен лимит трафика.\n\n"
+        "🔄 Подписка в приложении обновится автоматически — останутся все остальные "
+        "<b>безлимитные серверы</b>.\n\n"
+        "💡 Чтобы снова пользоваться сервером <b>Антиглушилка</b>, докупите трафик.\n"
+        "Неиспользованный лимит сохранится.\n\n"
+        "⬇️ Выберите пакет трафика:"
+    ),
+
+    'wl_traffic_low_warning': (
+        "📡 <b>Осталось меньше 1 ГБ трафика «Антиглушилка»</b>\n\n"
+        "├ Лимит: <b>{limit_gb:.2f} GB</b>\n"
+        "├ Использовано: <b>{used_gb:.2f} GB</b>\n\n"
+        "Когда трафик для сервера <b>Антиглушилка</b> полностью израсходуется, "
+        "он пропадёт из подписки (остальные серверы останутся).\n\n"
+        "💡 Чтобы продолжать пользоваться сервером <b>Антиглушилка</b>, докупите трафик.\n\n"
+        "⬇️ Выберите пакет трафика:"
+    ),
+
+    'wl_traffic_payment_intro': (
+        "📦 Пакет трафика: <b>{gb} GB</b> — <b>{price} ₽</b>\n\n"
+        "Сервер <b>Антиглушилка</b>.\n\n"
+        "Выберите способ оплаты:"
+    ),
+
+    'wl_traffic_payment_link': (
+        "📦 Пакет: <b>{gb} GB</b> — Антиглушилка\n\n"
+        "Для оплаты перейдите по ссылке.\n\n"
+        "🔄 После оплаты обновите подписку в приложении — "
+        "сервер <b>Антиглушилка</b> появится сразу или автоматически в течение часа."
+    ),
+
+    'wl_traffic_success': (
+        "✅ <b>Трафик успешно пополнен!</b>\n\n"
+        "📦 Добавлено: <b>{gb} GB</b> для сервера Антиглушилка\n\n"
+        "🔄 Обновите подписку в приложении — "
+        "сервер <b>Антиглушилка</b> появится сразу или автоматически в течение часа."
+    ),
+
+    'wl_traffic_admin_grant': (
+        "✅ <b>Вам добавлен трафик «Антиглушилка»</b>\n\n"
+        "➕ Начислено: <b>{gb:g} GB</b>\n"
+        "├ Использовано: <b>{used_gb:.2f} GB</b>\n"
+        "├ Лимит: <b>{limit_gb:.2f} GB</b>\n"
+        "└ Осталось: <b>{remaining_gb:.2f} GB</b>\n\n"
+        "🔄 Обновите подписку в приложении."
+    ),
+
+    'wl_traffic_buy_prompt': (
+        "📦 Выберите пакет трафика для сервера <b>Антиглушилка</b>:"
+    ),
 
     'import_start': '''
 😕 Не можете зайти на сайт с подпиской?
@@ -580,6 +646,7 @@ def _ru_days_duration_line(days: int) -> str:
 def payment_tariff_summary_pro(desc_key: str) -> str:
     """Текст тарифа PRO перед оплатой: устройства, срок из колбэка, сумма из dct_price."""
     from tariff_resolve import device_from_tariff_key, tariff_days_for_x3
+    from wl_traffic.texts import format_wl_bonus_suffix
 
     price = _price_rub_for_desc_key(desc_key)
     if price is None:
@@ -597,6 +664,9 @@ def payment_tariff_summary_pro(desc_key: str) -> str:
         days = tariff_days_for_x3(duration_plain)
         dur_line = _ru_days_duration_line(days)
 
+    days = tariff_days_for_x3(duration_plain)
+    wl_bonus = format_wl_bonus_suffix(days)
+
     return (
         f'Тариф — 💫 {dev_phrase}\n'
         f'5 серверов на выбор.\n'
@@ -604,6 +674,7 @@ def payment_tariff_summary_pro(desc_key: str) -> str:
         f'{dur_line}\n'
         f'\n'
         f'Сумма к оплате - {price}₽'
+        f'{wl_bonus}'
     )
 
 
@@ -658,7 +729,8 @@ def discount_tariff_payment_caption(desc_key: str) -> str:
 
 
 def discount_payment_summary(desc_key: str) -> str:
-    from tariff_resolve import device_from_tariff_key
+    from tariff_resolve import device_from_tariff_key, tariff_days_for_x3
+    from wl_traffic.texts import format_wl_bonus_suffix
 
     price = dct_price_discount_33.get(desc_key)
     if price is None:
@@ -670,6 +742,7 @@ def discount_payment_summary(desc_key: str) -> str:
         dur_line = _ru_month_duration_line(int(m.group(1)))
     else:
         dur_line = ''
+    wl_bonus = format_wl_bonus_suffix(tariff_days_for_x3(desc_key))
     return (
         f'Тариф — 💫 {dev_phrase} (скидка 33%)\n'
         f'5 серверов на выбор.\n'
@@ -677,4 +750,5 @@ def discount_payment_summary(desc_key: str) -> str:
         f'{dur_line}\n'
         f'\n'
         f'Сумма к оплате - {price}₽'
+        f'{wl_bonus}'
     )

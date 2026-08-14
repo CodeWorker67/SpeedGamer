@@ -397,6 +397,7 @@ async def trial_return_get_cb(callback: CallbackQuery):
 
     await sql.update_in_panel(uid)
     await sql.update_field_bool_3(uid, True)
+    await sql.init_wl_trial_limits(uid)
     await callback.message.answer(
         "🎉 Поздравляем! Вы получили 7 триальных дней доступа к ВПН! ✨🔐",
         reply_markup=create_kb(
@@ -471,6 +472,7 @@ async def trial_gift_broadcast_callback(callback: CallbackQuery):
         await sql.add_user(uid, True)
 
     await sql.update_field_bool_3(uid, True)
+    await sql.init_wl_trial_limits(uid)
     await callback.answer()
     await callback.message.answer(
         f"🎉 Поздравляем! Вы получили {days} дней триального доступа к ВПН! ✨🔐",
@@ -707,6 +709,10 @@ async def activate_gift(message: Message, gift_id: str):
                 f'Юзер {message.from_user.id} - {message.from_user.username} зашел в бота в первый раз и получил подарочную подписку')
 
         await message.answer(lexicon['gift_yes'].format(duration, subscription_time))
+
+        if not white_flag:
+            from wl_traffic.service import apply_wl_subscription_bonus
+            await apply_wl_subscription_bonus(sql, x3, user_id, int(duration))
         return True
 
     else:

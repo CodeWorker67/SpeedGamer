@@ -66,6 +66,13 @@ from tariff_resolve import (
     tariff_days_for_x3,
     tariff_rub_and_desc,
 )
+from wl_traffic.constants import WL_TRAFFIC_TARIFFS
+from wl_traffic.service import (
+    apply_wl_subscription_bonus,
+    get_wl_used_gb_for_user,
+    parse_traffic_duration,
+    subscription_bonus_gb,
+)
 
 # ── Rate limiter ────────────────────────────────────────────────────
 _rate_limits: dict[str, list[float]] = {}
@@ -1042,7 +1049,33 @@ async def user_profile(ctx: JwtCtx):
         user = await sql.get_user_object_by_user_id(int(ctx["user_id"]))
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-    return user_row_to_api_dict(user)
+    out = user_row_to_api_dict(user)
+    billing_uid = int(user.user_id)
+    trafic_wl, limit_wl = await sql.get_wl_limits(billing_uid)
+    used_gb = await get_wl_used_gb_for_user(x3, billing_uid, trafic_wl)
+    remaining_gb = max(0.0, round(limit_wl - used_gb, 2))
+    out["wl_traffic"] = {
+        "limit_gb": round(limit_wl, 2),
+        "used_gb": used_gb,
+        "remaining_gb": remaining_gb,
+    }
+    return out
+
+
+@app.get("/api/user/wl-traffic")
+async def user_wl_traffic(ctx: JwtCtx):
+    row = await _user_row_from_jwt(ctx)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    billing_uid = int(row[_U_USER_ID])
+    trafic_wl, limit_wl = await sql.get_wl_limits(billing_uid)
+    used_gb = await get_wl_used_gb_for_user(x3, billing_uid, trafic_wl)
+    remaining_gb = max(0.0, round(limit_wl - used_gb, 2))
+    return {
+        "limit_gb": round(limit_wl, 2),
+        "used_gb": used_gb,
+        "remaining_gb": remaining_gb,
+    }
 
 
 @app.post("/api/user/change-password")
@@ -1078,8 +1111,17 @@ async def config_tariffs():
             item["savings_pct"] = TARIFF_SAVINGS_PCT[tid]
         if first_only:
             item["first_payment_only"] = True
+        item["wl_bonus_gb"] = subscription_bonus_gb(tariff_days_for_x3(tid))
         out.append(item)
     return out
+
+
+@app.get("/api/config/traffic-tariffs")
+async def config_traffic_tariffs():
+    return [
+        {"id": f"traffic{gb}", "gb": int(gb), "price": price}
+        for gb, price in WL_TRAFFIC_TARIFFS.items()
+    ]
 
 
 @app.post("/api/payments/create")
@@ -1093,6 +1135,42 @@ async def payments_create(ctx: JwtCtx, body: CreatePaymentIn):
         billing_user_id = await resolve_telegram_user_id(ctx)
 
     tariff_id = body.tariff_id
+    traffic_gb = parse_traffic_duration(tariff_id)
+    if traffic_gb is not None:
+        if str(traffic_gb) not in WL_TRAFFIC_TARIFFS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown tariff")
+        if body.is_gift:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Traffic packages cannot be gifted")
+        price = 10 if billing_user_id in ADMIN_IDS else int(WL_TRAFFIC_TARIFFS[str(traffic_gb)])
+        if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "FreeKassa is not configured")
+        site_uname = ctx.get("username")
+        if not isinstance(site_uname, str):
+            site_uname = None
+        result = await pay_site(
+            val=str(price),
+            des=f"Трафик Антиглушилка {traffic_gb} GB",
+            billing_user_id=billing_user_id,
+            duration=f"traffic{traffic_gb}",
+            white=False,
+            device=5,
+            is_gift=False,
+            kind=body.method,
+            telegram_username=site_uname,
+            payload_source=SITE,
+        )
+        if result["status"] == "rate_limited":
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
+            )
+        if result["status"] != "pending":
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж")
+        return {
+            "payment_url": result.get("url") or "",
+            "payment_id": result.get("id") or "",
+        }
+
     if _site_tariff_price(tariff_id) is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown tariff")
 
@@ -1184,6 +1262,8 @@ async def gift_activate(ctx: JwtCtx, gift_id: str):
     result_active = await x3.activ(user_id_str)
     subscription_time = result_active.get("time", "-")
     await sql.update_in_panel(user_id)
+    if not white_flag:
+        await apply_wl_subscription_bonus(sql, x3, user_id, int(duration))
     return {
         "success": True,
         "days_added": duration,
@@ -1251,6 +1331,8 @@ async def gift_activate_web(gift_id: str):
     result_active = await x3.activ(panel_username)
     subscription_time = result_active.get("time", "-")
     await sql.update_in_panel(db_user_id)
+    if not white_flag:
+        await apply_wl_subscription_bonus(sql, x3, db_user_id, int(duration))
 
     subscription_url = await x3.sublink(panel_username)
     devices = 1 if white_flag else device_slots

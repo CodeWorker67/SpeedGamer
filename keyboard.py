@@ -6,6 +6,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CHANEL_URL, BOT_URL, SUPPORT_URL
 from lexicon import dct_desc
+from wl_traffic.constants import (
+    BUY_VPN_CB,
+    PROFILE_CB,
+    WL_TRAFFIC_BUY_CB,
+    WL_TRAFFIC_BUY_SUB_CB,
+)
 
 BTN_BACK = "🔙 Назад"
 REVIEWS_URL = "https://t.me/otzividlyasvoi"
@@ -157,12 +163,14 @@ def keyboard_start():
             "manage_devices": STYLE_PRIMARY,
             "ref": STYLE_PRIMARY,
             "buy_gift": STYLE_SUCCESS,
+            PROFILE_CB: STYLE_PRIMARY,
         },
         buy_vpn="🛒 Купить подписку",
         connect_vpn="🔗 Подключить ВПН",
         manage_devices="📱 Управление устройствами",
         ref="👥 Бесплатный VPN за приглашения",
         buy_gift="🎁 Подарить подписку",
+        **{PROFILE_CB: "👤 Профиль"},
     )
     rows = list(markup.inline_keyboard)
     rows.append(
@@ -202,11 +210,15 @@ def keyboard_buy_device_tier():
             "buy_tier_3": STYLE_PRIMARY,
             "buy_tier_5": STYLE_PRIMARY,
             "buy_tier_10": STYLE_SUCCESS,
+            WL_TRAFFIC_BUY_SUB_CB: STYLE_SUCCESS,
         },
         buy_tier_3="🔹 Тарифы на 3️⃣ устройства",
         buy_tier_5="🔸 Тарифы на 5️⃣ устройств",
         buy_tier_10="🏆 Тарифы на 🔟 устройств",
-        back_to_main=BTN_BACK,
+        **{
+            WL_TRAFFIC_BUY_SUB_CB: "📦 Купить трафик",
+            "back_to_main": BTN_BACK,
+        },
     )
 
 
@@ -740,4 +752,76 @@ def keyboard_discount_push_payment(desc_key: str) -> InlineKeyboardMarkup:
                 callback_data=f"dpush_back_dur_{devices}",
             )
         ],
+    ])
+
+
+def keyboard_profile() -> InlineKeyboardMarkup:
+    return create_kb(
+        1,
+        styles={
+            WL_TRAFFIC_BUY_CB: STYLE_SUCCESS,
+            "back_to_main": STYLE_PRIMARY,
+        },
+        **{
+            WL_TRAFFIC_BUY_CB: "📦 Купить трафик",
+            "back_to_main": BTN_BACK,
+        },
+    )
+
+
+def keyboard_wl_traffic_tariffs(*, back_callback: str = "back_to_main") -> InlineKeyboardMarkup:
+    labels = {
+        "10": "10 GB — 50 ₽",
+        "20": "20 GB — 79 ₽",
+        "50": "50 GB — 149 ₽",
+        "100": "100 GB — 259 ₽",
+        "250": "250 GB — 629 ₽",
+        "500": "500 GB — 1249 ₽",
+    }
+    from_sub = back_callback == BUY_VPN_CB
+    buttons = []
+    for mb, label in labels.items():
+        cb = f"wl_traffic_sub_{mb}" if from_sub else f"wl_traffic_{mb}"
+        buttons.append([
+            InlineKeyboardButton(
+                text=label,
+                callback_data=cb,
+                style=STYLE_SUCCESS if mb in ("50", "100", "250", "500") else STYLE_PRIMARY,
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text=BTN_BACK, callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def keyboard_wl_traffic_payment_method(mb: str, *, back_callback: str = WL_TRAFFIC_BUY_CB) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⚡ СБП",
+                callback_data=f"wl_traffic_sbp_{mb}",
+                style=STYLE_SUCCESS,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💳 Карта РФ",
+                callback_data=f"wl_traffic_card_{mb}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⭐️ Telegram Stars",
+                callback_data=f"wl_traffic_stars_{mb}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💎 Crypto bot",
+                callback_data=f"wl_traffic_crypto_{mb}",
+                style=STYLE_PRIMARY,
+            )
+        ],
+        [InlineKeyboardButton(text=BTN_BACK, callback_data=back_callback)],
     ])

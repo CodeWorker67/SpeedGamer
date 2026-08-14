@@ -3,13 +3,20 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from bot import x3, sql, bot
 
-from config import PARTNER_PROCENT, LEAD_TRACKER_STAR_RUB_PER_STAR
+from config import PARTNER_PROCENT, LEAD_TRACKER_STAR_RUB_PER_STAR, CHECKER_ID
 from lead_tracker import post_payment_success
 from keyboard import create_kb, keyboard_sub_after_buy, BTN_BACK
 from lexicon import lexicon
 from logging_config import logger
 from payments.payload_parse import parse_payment_payload
 from tariff_resolve import panel_username
+from wl_traffic.service import (
+    credit_wl_subscription_bonus,
+    get_wl_used_gb_for_user,
+    parse_traffic_duration,
+    restore_pro_squads_if_under_limit,
+)
+from wl_traffic.texts import format_wl_checker_traffic_purchase
 
 REFERRER_REF_BONUS_DAYS = 7
 
@@ -66,15 +73,49 @@ async def _credit_partner_commission(payer_uid: int, method: str, amount: int | 
         logger.error("❌ Ошибка начисления партнёрского вознаграждения: {}", e)
 
 
+async def _process_traffic_topup(user_id: int, gb: int, method: str, amount: int | float) -> bool:
+    """Пополнение трафика Антиглушилка после успешной оплаты."""
+    await sql.add_wl_limit(user_id, float(gb))
+
+    trafic_wl, limit_wl = await sql.get_wl_limits(user_id)
+    used_gb = await get_wl_used_gb_for_user(x3, user_id, trafic_wl)
+    await restore_pro_squads_if_under_limit(x3, user_id, used_gb, limit_wl)
+
+    await post_payment_success(user_id, method, amount)
+    await _credit_partner_commission(user_id, method, amount)
+
+    if CHECKER_ID is not None:
+        try:
+            await bot.send_message(
+                chat_id=CHECKER_ID,
+                text=format_wl_checker_traffic_purchase(user_id, gb, used_gb, limit_wl),
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка уведомления CHECKER_ID о покупке трафика {user_id}: {e}")
+
+    if user_id > 0:
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=lexicon["wl_traffic_success"].format(gb=gb),
+                parse_mode="HTML",
+                reply_markup=create_kb(1, back_to_main=BTN_BACK),
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка уведомления о пополнении трафика {user_id}: {e}")
+
+    logger.info(f"✅ Трафик Антиглушилка +{gb} GB для user={user_id}")
+    return True
+
+
 async def process_confirmed_payment(payload) -> bool:
     """Обработка подтвержденного платежа. True — подписка/подарок применены успешно."""
     try:
         # Парсим payload (поддержка флагов без значения, напр. ,discount)
         payload_parts = parse_payment_payload(payload)
         user_id = int(payload_parts.get('user_id', 0))
-        duration = int(payload_parts.get('duration', 0))
-        white_flag = payload_parts.get('white', 'False') == 'True'
-        is_gift = payload_parts.get('gift', 'False') == 'True'
+        duration_raw = payload_parts.get('duration', '0')
+        traffic_gb = parse_traffic_duration(str(duration_raw))
         method = payload_parts.get('method', '')
         if method in (
             'sbp', 'fksbp', 'fk_sbp', 'fk_card', 'stars', 'card', 'crypto', 'cryptobot', 'wata_sbp', 'wata_card',
@@ -82,6 +123,15 @@ async def process_confirmed_payment(payload) -> bool:
             amount = int(payload_parts.get('amount', 0))
         else:
             amount = float(payload_parts.get('amount', 0.0))
+
+        if traffic_gb is not None:
+            if method == 'stars':
+                await sql.add_payment_stars(user_id, amount, False, payload)
+            return await _process_traffic_topup(user_id, traffic_gb, method, amount)
+
+        duration = int(duration_raw)
+        white_flag = payload_parts.get('white', 'False') == 'True'
+        is_gift = payload_parts.get('gift', 'False') == 'True'
 
         device_raw = payload_parts.get('device')
         try:
@@ -274,6 +324,12 @@ async def process_confirmed_payment(payload) -> bool:
             await sql.update_reserve_field(user_id)
             await post_payment_success(user_id, method, amount)
             await _credit_partner_commission(user_id, method, amount)
+
+            if not white_flag:
+                await credit_wl_subscription_bonus(sql, user_id, duration)
+                trafic_wl, limit_wl = await sql.get_wl_limits(user_id)
+                used_gb = await get_wl_used_gb_for_user(x3, user_id, trafic_wl)
+                await restore_pro_squads_if_under_limit(x3, user_id, used_gb, limit_wl)
 
             # Отправляем уведомление пользователю
             try:
