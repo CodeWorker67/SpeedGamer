@@ -64,6 +64,37 @@ def _payload_duration_to_panel_days(raw: Optional[str]) -> Optional[int]:
         return None
 
 
+def _parse_traffic_duration(raw: Optional[str]) -> Optional[int]:
+    """duration:traffic10 -> 10 GB; иначе None."""
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s.startswith("traffic"):
+        return None
+    try:
+        return int(s.replace("traffic", ""))
+    except ValueError:
+        return None
+
+
+def _payment_method_label(raw: Optional[str]) -> str:
+    if not raw:
+        return "—"
+    key = raw.strip().lower()
+    labels = {
+        "sbp": "Platega СБП",
+        "card": "Platega карта",
+        "crypto": "Platega крипто",
+        "wata_sbp": "WATA СБП",
+        "wata_card": "WATA карта",
+        "fk_sbp": "FreeKassa СБП",
+        "fk_card": "FreeKassa карта",
+        "stars": "Stars",
+        "cryptobot": "CryptoBot",
+    }
+    return labels.get(key, raw.strip())
+
+
 def _white_days_from_amount_fallback(amount: Any) -> Optional[int]:
     try:
         target = int(round(float(amount)))
@@ -1594,6 +1625,21 @@ class AsyncSQL:
             result = await session.execute(stmt)
             return result.scalars().all()
 
+    async def get_fk_sbp_payments_for_date(self, day: date) -> List[PaymentsFkSBP]:
+        day_start = datetime.combine(day, datetime.min.time())
+        day_end = day_start + timedelta(days=1)
+        async with self.session_factory() as session:
+            stmt = (
+                select(PaymentsFkSBP)
+                .where(
+                    PaymentsFkSBP.time_created >= day_start,
+                    PaymentsFkSBP.time_created < day_end,
+                )
+                .order_by(PaymentsFkSBP.time_created)
+            )
+            result = await session.execute(stmt)
+            return result.scalars().all()
+
     async def update_fk_sbp_payment_status(self, transaction_id: str, new_status: str) -> None:
         async with self.session_factory() as session:
             stmt = update(PaymentsFkSBP).where(
@@ -2089,12 +2135,12 @@ class AsyncSQL:
 
     async def get_user_subscription_payment_report(
         self, user_id: int
-    ) -> List[Tuple[datetime, str, str]]:
+    ) -> List[Tuple[datetime, str, str, str]]:
         """
         Успешные платежи пользователя (confirmed/paid) по всем таблицам оплат.
-        Возвращает список (time_created UTC naive, тип подписки, кол-во дней как строка).
+        Возвращает список (time_created, тип, способ оплаты, детали: «N дн.» или «N GB»).
         """
-        rows_acc: List[Tuple[datetime, str, str]] = []
+        rows_acc: List[Tuple[datetime, str, str, str]] = []
 
         def _parse_map(payload: Optional[str]) -> Dict[str, str]:
             if not payload:
@@ -2126,14 +2172,21 @@ class AsyncSQL:
                 return "10 устройств"
             return "5 устройств"
 
-        def _row_kind_and_days(
+        def _row_report_fields(
             payload: Optional[str], is_gift: bool, amount: Any
-        ) -> Tuple[str, str]:
+        ) -> Tuple[str, str, str]:
             m = _parse_map(payload)
+            method = _payment_method_label(m.get("method"))
+            raw_duration = m.get("duration")
+
+            traffic_gb = _parse_traffic_duration(raw_duration)
+            if traffic_gb is not None:
+                return "Трафик", method, f"{traffic_gb} GB"
+
             white = m.get("white", "False").lower() == "true"
             gift = bool(is_gift) or m.get("gift", "False").lower() == "true"
             device_slots = _device_slots_from_payload(m)
-            dur = _payload_duration_to_panel_days(m.get("duration"))
+            dur = _payload_duration_to_panel_days(raw_duration)
             if dur is None:
                 try:
                     amt_f = float(amount)
@@ -2155,8 +2208,8 @@ class AsyncSQL:
             else:
                 label = tariff
 
-            days_s = str(dur) if dur is not None else "—"
-            return label, days_s
+            days_s = f"{dur} дн." if dur is not None else "—"
+            return label, method, days_s
 
         async with self.session_factory() as session:
             queries: List[Any] = [
@@ -2243,8 +2296,8 @@ class AsyncSQL:
             ]
             for q in queries:
                 for _uid, tc, amt, pl, ig in (await session.execute(q)).all():
-                    kind, days_s = _row_kind_and_days(pl, bool(ig), amt)
-                    rows_acc.append((tc, kind, days_s))
+                    kind, method, detail = _row_report_fields(pl, bool(ig), amt)
+                    rows_acc.append((tc, kind, method, detail))
 
         rows_acc.sort(key=lambda x: (x[0], x[1]))
         return rows_acc
