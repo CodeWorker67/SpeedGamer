@@ -78,12 +78,15 @@ type DurationId =
 
 type PayMethodId = 'fk_sbp' | 'fk_card' | 'stars' | 'cryptobot'
 
-const PAY_METHODS: ReadonlyArray<{ id: PayMethodId; label: string }> = [
+const PAY_METHODS_ALL: ReadonlyArray<{ id: PayMethodId; label: string }> = [
     { id: 'fk_sbp', label: 'СБП' },
     { id: 'fk_card', label: 'Карты РФ' },
     { id: 'stars', label: 'Telegram Stars' },
     { id: 'cryptobot', label: 'Telegram Cryptobot' }
 ]
+const PAY_METHODS_SITE = PAY_METHODS_ALL.filter(
+    (m) => m.id === 'fk_sbp' || m.id === 'fk_card'
+)
 
 type DeviceTier = 3 | 5 | 10
 
@@ -93,14 +96,25 @@ function deviceTierFromUsername(username: string): DeviceTier {
     return 5
 }
 
-/** user_id: числовая часть username; снимаются суффиксы `_white`, `_10`, `_3`. */
+/**
+ * user_id из username страницы подписки.
+ * Telegram: 123456789. Сайт: -1833 или n-2 (короткие отрицательные id).
+ * Снимаются суффиксы _white, затем _10, затем _3.
+ */
 function parseSubPageUserId(username: string): number | null {
-    let base = username
+    let base = username.trim()
     if (base.endsWith('_white')) base = base.slice(0, -'_white'.length)
     if (base.endsWith('_10')) base = base.slice(0, -'_10'.length)
-    else if (base.endsWith('_3')) base = base.slice(0, -'_3'.length)
-    const n = Number.parseInt(base, 10)
-    return Number.isFinite(n) ? n : null
+    if (base.endsWith('_3')) base = base.slice(0, -'_3'.length)
+    const numeric = (s: string): number | null => {
+        if (!/^-?\d+$/.test(s)) return null
+        const n = Number.parseInt(s, 10)
+        return Number.isFinite(n) ? n : null
+    }
+    const direct = numeric(base)
+    if (direct != null) return direct
+    if (base.startsWith('n')) return numeric(base.slice(1))
+    return null
 }
 
 function payBlockTitle(tier: DeviceTier): string {
@@ -137,6 +151,8 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
     const { user } = useSubscription()
     const tier = useMemo(() => deviceTierFromUsername(user.username), [user.username])
     const userId = useMemo(() => parseSubPageUserId(user.username), [user.username])
+    const isSiteUser = userId != null && userId <= 0
+    const payMethods = isSiteUser ? PAY_METHODS_SITE : PAY_METHODS_ALL
     const payCfg = useMemo(() => subPagePayFromBuild(), [])
     const subscriptionStillActive = useMemo(() => {
         if (user.userStatus !== 'ACTIVE') return false
@@ -296,7 +312,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                         </Text>
                     ) : null}
                     <SimpleGrid cols={1} spacing="xs">
-                        {PAY_METHODS.map((m) => (
+                        {payMethods.map((m) => (
                             <Button
                                 key={m.id}
                                 loading={busyMethod === m.id}
