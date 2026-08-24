@@ -1174,7 +1174,7 @@ async def config_tariffs():
 async def config_traffic_tariffs():
     return [
         {"id": f"traffic{gb}", "gb": int(gb), "price": price}
-        for gb, price in WL_TRAFFIC_TARIFFS.items()
+        for gb, price in sorted(WL_TRAFFIC_TARIFFS.items(), key=lambda item: int(item[0]), reverse=True)
     ]
 
 
