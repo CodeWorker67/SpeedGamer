@@ -1,37 +1,29 @@
-import urllib.parse
-
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InputMediaPhoto
 
-from bot import x3
+from bot import bot, x3
+from X3 import SUBSCRIPTION_SLOTS, panel_username_for_telegram_slot
 from keyboard import (
-    keyboard_import_os,
-    keyboard_import_app,
-    keyboard_import_sub,
-    keyboard_import_end,
+    BTN_BACK,
     create_kb,
+    keyboard_import_after_album,
+    keyboard_import_app,
+    keyboard_import_os,
+    keyboard_import_slots,
+    keyboard_import_sub,
 )
 from lexicon import lexicon
+from utils.custom_emoji import emojify
+from utils.menu_photos import import_photos
+from utils.menu_ui import edit_or_send_photo
 
 router: Router = Router()
 
 OS_CALLBACKS = {'import_android', 'import_ios', 'import_windows', 'import_macos'}
-
-INCY_PHOTOS = [
-    'AgACAgQAAxkBAAFc_vJqQlS3lOcGNBGiNRJCcxdzwuf8swACAg9rG-RnGFIv88tguls85wEAAwIAA3gAAzwE',
-    'AgACAgQAAxkBAAFc_0JqQlS_sBd8CPp_bsiFrlDd3pBRsQACAw9rG-RnGFIarCYVPhCt8gEAAwIAA3gAAzwE',
-]
-
-HAPP_PHOTOS = [
-    'AgACAgIAAxkBAAEPMfNpuuFYB037vCUdedfpqS5ypOaVZwAC4xhrG0h32Emm-Cx1F38P2AEAAwIAA3kAAzoE',
-    'AgACAgIAAxkBAAEPMfVpuuGdCuGgeeOBc1e4cQthdWA3OAAC6BhrG0h32EkCxf1P9qKWzwEAAwIAA3kAAzoE',
-]
-
-V2_PHOTOS = [
-    'AgACAgIAAxkBAAEPMfhpuuGu0Rg_-nKG-PcvViCGfoN4AQAC6RhrG0h32El2wcWMdvvLrgEAAwIAA3kAAzoE',
-    'AgACAgIAAxkBAAEPMfppuuHSQmUSRF9AtlPh8S_vYZpICgAC6hhrG0h32Elfi-ITfrYC6QEAAwIAA3kAAzoE',
-    'AgACAgIAAxkBAAEPMfxpuuHnZOPTsCVK3JKqaYR_2TzIUAAC7RhrG0h32EmvaFothcL4KAEAAwIAA3kAAzoE',
-]
+_IMPORT_SUB_SLOTS = {slot for slot, _ in SUBSCRIPTION_SLOTS}
+_OS_KEYS = ('android', 'ios', 'windows', 'macos')
+_APP_KEYS = ('incy', 'happ', 'v2')
 
 OS_DISPLAY = {
     'android': '🤖 Android',
@@ -102,66 +94,41 @@ IMPORT_URLS = {
 }
 
 
-@router.callback_query(F.data == 'import')
-async def import_select_os(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        text=lexicon['import_start'],
-        reply_markup=keyboard_import_os()
-    )
+def _active_slot_buttons(slots) -> list[tuple[str, str]]:
+    return [(slot, label) for slot, label, *_ in slots]
 
 
-@router.callback_query(F.data.in_(OS_CALLBACKS))
-async def import_select_app(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        text=lexicon['import_select_app'],
-        reply_markup=keyboard_import_app(callback.data)
-    )
-
-
-@router.callback_query(
-    F.data.startswith('import_') &
-    (F.data.endswith('_incy') | F.data.endswith('_happ') | F.data.endswith('_v2'))
-)
-async def import_select_sub(callback: CallbackQuery):
-    await callback.answer()
-    links = await x3.active_subscription_links(callback.from_user.id)
-
-    if not links:
-        await callback.message.answer(
-            text=lexicon['no_sub'],
-            reply_markup=create_kb(1, back_to_main='🔙 Назад')
+async def _show_slot_select(callback: CallbackQuery) -> None:
+    slots = await x3.active_subscription_slots(callback.from_user.id)
+    subscriptions = _active_slot_buttons(slots)
+    if not subscriptions:
+        await edit_or_send_photo(
+            callback,
+            "faq",
+            lexicon['no_sub'],
+            create_kb(1, connect_vpn=BTN_BACK),
         )
         return
-
-    await callback.message.answer(
-        text=lexicon['import_select_sub'],
-        reply_markup=keyboard_import_sub(callback.data, links)
+    await edit_or_send_photo(
+        callback,
+        "faq",
+        lexicon['import_start'],
+        keyboard_import_slots(subscriptions),
     )
 
 
-@router.callback_query(
-    F.data.regexp(r'^import_(android|ios|windows|macos)_(incy|happ|v2)_sub_(main|3|10|white)$')
-)
-async def import_end(callback: CallbackQuery):
-    await callback.answer()
-    parts = callback.data.split('_')
-    os_key = parts[1]
-    app_key = parts[2]
-    slot_key = parts[4]
-
-    username = x3.username_for_slot(callback.from_user.id, slot_key)
+async def _finish_import(callback: CallbackQuery, os_key: str, app_key: str, slot: str) -> None:
+    labels = dict(SUBSCRIPTION_SLOTS)
+    label = labels.get(slot, slot)
+    username = panel_username_for_telegram_slot(callback.from_user.id, slot)
     sub_url = await x3.sublink(username)
-    label = next(
-        (slot_label for key, _suffix, slot_label in x3.SUBSCRIPTION_SLOTS if key == slot_key),
-        '💫 Ваша подписка ВПН',
-    )
 
     if not sub_url:
-        await callback.message.answer(
+        await edit_or_send_photo(
+            callback,
+            "faq",
             '❌ Не удалось получить ссылку. Обратитесь в поддержку.',
-            reply_markup=create_kb(1, back_to_main='🔙 Назад')
+            create_kb(1, back_to_main=BTN_BACK),
         )
         return
 
@@ -170,25 +137,117 @@ async def import_end(callback: CallbackQuery):
 
     if app_key == 'incy':
         lexicon_key = 'import_end_incy'
-        photos = INCY_PHOTOS
     elif app_key == 'happ':
         lexicon_key = 'import_end_happ'
-        photos = HAPP_PHOTOS
     else:
         lexicon_key = 'import_end_v2'
-        photos = V2_PHOTOS
 
-    caption = lexicon[lexicon_key].format(
+    caption = emojify(lexicon[lexicon_key].format(
         os=OS_DISPLAY[os_key],
         app=APP_DISPLAY[app_key],
         label=label,
         url_app=url_app,
         url_import=sub_url,
-    )
-
+    ))
+    photos = import_photos(app_key)
     media = [InputMediaPhoto(media=file_id) for file_id in photos]
     media[0] = InputMediaPhoto(media=photos[0], caption=caption, parse_mode='HTML')
 
-    await callback.message.answer_media_group(media=media)
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+
+    await bot.send_media_group(callback.message.chat.id, media=media)
+    await bot.send_message(
+        callback.message.chat.id,
+        "Если нужно, вернитесь в меню:",
+        reply_markup=keyboard_import_after_album(),
+    )
 
 
+@router.callback_query(F.data == 'import')
+async def import_select_slot(callback: CallbackQuery):
+    await callback.answer()
+    await _show_slot_select(callback)
+
+
+@router.callback_query(F.data.regexp(r'^import_slot_(main|3|10|white)$'))
+async def import_select_os(callback: CallbackQuery):
+    await callback.answer()
+    slot = callback.data.removeprefix('import_slot_')
+    await edit_or_send_photo(
+        callback,
+        "faq",
+        lexicon['import_select_os'],
+        keyboard_import_os(slot),
+    )
+
+
+@router.callback_query(F.data.in_(OS_CALLBACKS))
+async def import_select_app_legacy(callback: CallbackQuery):
+    """Старые сообщения без выбранной подписки — сначала слот."""
+    await callback.answer()
+    await _show_slot_select(callback)
+
+
+@router.callback_query(
+    F.data.regexp(r'^import_(android|ios|windows|macos)_(main|3|10|white)$')
+)
+async def import_select_app(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split('_')
+    os_key = parts[1]
+    slot = parts[2]
+    await edit_or_send_photo(
+        callback,
+        "faq",
+        lexicon['import_select_app'],
+        keyboard_import_app(f'import_{os_key}', slot=slot, back_callback=f'import_slot_{slot}'),
+    )
+
+
+@router.callback_query(
+    F.data.startswith('import_') &
+    (F.data.endswith('_incy') | F.data.endswith('_happ') | F.data.endswith('_v2'))
+)
+async def import_select_sub_legacy(callback: CallbackQuery):
+    """Старые сообщения: после приложения ещё выбирали подписку."""
+    await callback.answer()
+    slots = await x3.active_subscription_slots(callback.from_user.id)
+    subscriptions = _active_slot_buttons(slots)
+    if not subscriptions:
+        await edit_or_send_photo(
+            callback,
+            "faq",
+            lexicon['no_sub'],
+            create_kb(1, back_to_main=BTN_BACK),
+        )
+        return
+    await edit_or_send_photo(
+        callback,
+        "faq",
+        lexicon['import_select_sub'],
+        keyboard_import_sub(callback.data, subscriptions),
+    )
+
+
+@router.callback_query(
+    F.data.startswith('import_') &
+    F.data.split('_')[-1].in_(_IMPORT_SUB_SLOTS)
+)
+async def import_end(callback: CallbackQuery):
+    parts = callback.data.split('_')
+    if len(parts) < 4:
+        await callback.answer()
+        return
+
+    os_key = parts[1]
+    app_key = parts[2]
+    slot = parts[3]
+    if os_key not in OS_DISPLAY or app_key not in APP_DISPLAY:
+        await callback.answer()
+        return
+
+    await callback.answer()
+    await _finish_import(callback, os_key, app_key, slot)

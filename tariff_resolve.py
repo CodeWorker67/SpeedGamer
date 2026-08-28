@@ -83,6 +83,8 @@ def tariff_days_for_x3(duration_key_plain: str) -> int:
         if duration_key_plain == "new_3000":
             return 3000
         return int(duration_key_plain.replace("new_", "", 1))
+    if duration_key_plain in ("5000", "5000sale"):
+        return 5000
     m_md = re.fullmatch(r"m(\d+)_d(\d+)", duration_key_plain)
     if m_md:
         months = int(m_md.group(1))

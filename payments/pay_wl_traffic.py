@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, LabeledPrice
 
 from bot import bot
 from config import ADMIN_IDS, PAYMENT_MAX_PENDING_PER_USER
-from keyboard import BTN_BACK, STYLE_SUCCESS, create_kb, keyboard_payment_sbp, keyboard_payment_stars
+from keyboard import BTN_BACK, create_kb, emoji_button, keyboard_payment_sbp, keyboard_payment_stars
 from lexicon import lexicon
+from utils.menu_ui import edit_or_send_photo
 from payments.pay_cryptobot import create_cryptobot_payment
 from payments.pay_freekassa import pay
 from payments.payment_limits import payment_creation_allowed
@@ -66,10 +67,11 @@ async def _pay_fk(callback: CallbackQuery, ui_kind: str) -> None:
 
     btn = "⚡ Оплатить СБП" if ui_kind == "sbp" else "💳 Оплатить картой РФ"
     if payment_info["status"] == "pending":
-        await callback.message.edit_text(
-            text=lexicon["wl_traffic_payment_link"].format(gb=gb),
-            parse_mode="HTML",
-            reply_markup=keyboard_payment_sbp(btn, payment_info["url"]),
+        await edit_or_send_photo(
+            callback,
+            "buy_traffic",
+            lexicon["wl_traffic_payment_link"].format(gb=gb),
+            keyboard_payment_sbp(btn, payment_info["url"]),
         )
     elif payment_info["status"] == "rate_limited":
         await callback.message.answer(
@@ -140,16 +142,16 @@ async def wl_traffic_pay_crypto(callback: CallbackQuery):
 
     if result["status"] == "pending":
         pay_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
+            [emoji_button(
                 text=f"💎 Оплатить криптой · {rub_amount} ₽",
                 url=result["url"],
-                style=STYLE_SUCCESS,
             )]
         ])
-        await callback.message.edit_text(
-            text=lexicon["wl_traffic_payment_link"].format(gb=gb),
-            parse_mode="HTML",
-            reply_markup=pay_keyboard,
+        await edit_or_send_photo(
+            callback,
+            "buy_traffic",
+            lexicon["wl_traffic_payment_link"].format(gb=gb),
+            pay_keyboard,
         )
     else:
         await callback.message.answer(

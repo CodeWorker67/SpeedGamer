@@ -53,6 +53,8 @@ def _payload_duration_to_panel_days(raw: Optional[str]) -> Optional[int]:
     s = str(raw).strip()
     if s == "30secret":
         return 30
+    if s == "5000sale":
+        return 5000
     try:
         v = int(s)
         return v if v > 0 else None
@@ -1130,6 +1132,48 @@ class AsyncSQL:
             result = await session.execute(stmt)
             return [row[0] for row in result.all()]
 
+    _FOREVER_PAYMENT_AMOUNTS = (4990, 2790)
+
+    @staticmethod
+    def _forever_payment_cond(table):
+        """Платёж за тариф «Навсегда» (duration:5000 / 5000sale или типичные суммы)."""
+        return or_(
+            table.payload.like("%duration:5000%"),
+            table.amount.in_(AsyncSQL._FOREVER_PAYMENT_AMOUNTS),
+        )
+
+    def _forever_payers_subquery(self):
+        """user_id, хотя бы раз оплативших тариф «Навсегда»."""
+        fc = self._forever_payment_cond
+        return (
+            select(Payments.user_id)
+            .where(Payments.status == "confirmed", fc(Payments))
+            .union(
+                select(PaymentsStars.user_id).where(
+                    PaymentsStars.status == "confirmed", fc(PaymentsStars)
+                ),
+                select(PaymentsCryptobot.user_id).where(
+                    PaymentsCryptobot.status == "paid", fc(PaymentsCryptobot)
+                ),
+                select(PaymentsCards.user_id).where(
+                    PaymentsCards.status == "confirmed", fc(PaymentsCards)
+                ),
+                select(PaymentsPlategaCrypto.user_id).where(
+                    PaymentsPlategaCrypto.status == "confirmed", fc(PaymentsPlategaCrypto)
+                ),
+                select(PaymentsWataSBP.user_id).where(
+                    PaymentsWataSBP.status == "confirmed", fc(PaymentsWataSBP)
+                ),
+                select(PaymentsWataCard.user_id).where(
+                    PaymentsWataCard.status == "confirmed", fc(PaymentsWataCard)
+                ),
+                select(PaymentsFkSBP.user_id).where(
+                    PaymentsFkSBP.status == "confirmed", fc(PaymentsFkSBP)
+                ),
+            )
+            .subquery()
+        )
+
     def _build_broadcast_where(self, category: str, exclude_today: bool):
         """
         Условие выборки пользователей для рассылки.
@@ -1227,6 +1271,20 @@ class AsyncSQL:
                     Users.is_delete == False,
                 )
             )
+        if category == "never_bought_forever":
+            from wl_traffic.constants import FOREVER_END_CUTOFF
+
+            forever_paid = self._forever_payers_subquery()
+            return wrap(
+                and_(
+                    Users.is_delete == False,
+                    Users.user_id.notin_(forever_paid),
+                    or_(
+                        Users.subscription_end_date.is_(None),
+                        Users.subscription_end_date < FOREVER_END_CUTOFF,
+                    ),
+                )
+            )
         return None
 
     async def count_users_for_broadcast(self, category: str, exclude_today: bool) -> int:
@@ -1245,6 +1303,22 @@ class AsyncSQL:
             stmt = select(Users.user_id).where(where_clause)
             result = await session.execute(stmt)
             return [row[0] for row in result.all()]
+
+    async def select_forever_active_users(self) -> List[int]:
+        """Активные пользователи тарифа Навсегда (5 устройств, end_date >= 2030-01-01)."""
+        from wl_traffic.constants import FOREVER_END_CUTOFF
+
+        async with self.session_factory() as session:
+            now = datetime.now()
+            stmt = select(Users.user_id).where(
+                Users.is_delete == False,
+                Users.in_panel == True,
+                Users.subscription_end_date.isnot(None),
+                Users.subscription_end_date > now,
+                Users.subscription_end_date >= FOREVER_END_CUTOFF,
+            )
+            result = await session.execute(stmt)
+            return [int(r[0]) for r in result.all()]
 
     async def select_subscribed_not_in_chanel(self):
         async with self.session_factory() as session:
@@ -1399,6 +1473,7 @@ class AsyncSQL:
             "not_subscribed",
             "connected_never_paid",
             "subscribed_all",
+            "never_bought_forever",
             "all_users",
         ]
 

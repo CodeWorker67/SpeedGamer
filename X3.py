@@ -17,6 +17,19 @@ import string
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+SUBSCRIPTION_SLOTS: Tuple[Tuple[str, str], ...] = (
+    ("main", "💫 Подписка · 5 устройств"),
+    ("3", "💫 Подписка · 3 устройства"),
+    ("10", "💫 Подписка · 10 устройств"),
+    ("white", "🦾 Мобильный тариф"),
+)
+
+
+def panel_username_for_telegram_slot(telegram_id: int, slot: str) -> str:
+    suffix_map = {"main": "", "3": "_3", "10": "_10", "white": "_white"}
+    return f"{telegram_id}{suffix_map.get(slot, '')}"
+
+
 class X3:
     def __init__(self):
         """Инициализация класса с настройками подключения"""
@@ -339,7 +352,10 @@ class X3:
                         logger.error(f"Не удалось прочитать JSON для пользователя {username}")
                         return None
                 else:
-                    logger.error(f"Ошибка получения пользователя {username}: {await resp.text()}")
+                    error_text = await resp.text()
+                    if resp.status == 404 or "A063" in error_text:
+                        return None
+                    logger.error(f"Ошибка получения пользователя {username}: {error_text}")
                     return None
         except Exception as e:
             logger.error(f"Ошибка получения пользователя {username}: {e}")

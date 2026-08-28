@@ -2,6 +2,7 @@ import asyncio
 import urllib.parse
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,20 +15,22 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from bot import sql
+from bot import sql, x3
 from botapi_sender import send_message
-from config import ADMIN_IDS, BOT_URL, CHECKER_ID
+from config import ADMIN_IDS, BOT_URL, CHECKER_ID, SUPPORT_URL
 from keyboard import (
     BTN_BACK,
     STYLE_DANGER,
     STYLE_PRIMARY,
     STYLE_SUCCESS,
     create_kb,
-    keyboard_buy_device_tier,
+    emoji_button,
     keyboard_start,
+    keyboard_buy_device_tier,
 )
 from logging_config import logger
 from telegram_ids import is_telegram_chat_id
+from utils.menu_ui import CONNECT_BTN_BY_SLOT
 
 router = Router()
 
@@ -44,6 +47,12 @@ CB_PIN = "bcpin:"
 BCBTN = "bcbtn:"
 BCACT = "bcact:"
 BCST = "bcst:"
+BC_CONNECT_VPN = "bc_connect_vpn"
+
+_CONNECT_LINK_BTN_BY_SLOT = {
+    **CONNECT_BTN_BY_SLOT,
+    "white": "🔗 Подключить ВПН (мобильный)",
+}
 
 LINK_STYLE_LABELS = {
     "primary": "Основной (синий)",
@@ -60,6 +69,7 @@ CATEGORY_LABELS = {
     "not_subscribed": "без подписки в панели",
     "connected_never_paid": "подключены, никогда не платили",
     "subscribed_all": "есть подписка в панели (с датой окончания)",
+    "never_bought_forever": "без тарифа Навсегда",
     "all_users": "все пользователи",
 }
 
@@ -68,18 +78,22 @@ SCOPE_LABEL = {
     True: "только тем, кому сегодня не было отправки",
 }
 
-# callback_data и подписи как в keyboard.py (главное меню и тарифы)
+# (preset_id, callback_data, text, style)
 CUSTOM_PRESETS = [
-    ("free_vpn", "🔥 Попробовать бесплатно (legacy)", STYLE_SUCCESS),
-    ("buy_vpn", "🛒 Купить подписку", STYLE_SUCCESS),
-    ("connect_vpn", "🔗 Подключить ВПН", STYLE_PRIMARY),
-    ("ref", "👥 Рефералка", STYLE_PRIMARY),
-    ("buy_gift", "🎁 Подарить подписку", STYLE_SUCCESS),
-    ("user_profile", "👤 Профиль", STYLE_PRIMARY),
-    ("ref_invite", "Пригласить друзей🫶", STYLE_SUCCESS),
-    ("buy_tier_3", "🔹 Тарифы на 3️⃣ устройства", STYLE_PRIMARY),
-    ("buy_tier_5", "🔸 Тарифы на 5️⃣ устройств", STYLE_PRIMARY),
-    ("buy_tier_10", "🏆 Тарифы на 🔟 устройств", STYLE_SUCCESS),
+    ("free_vpn", "free_vpn", "🔥 Попробовать бесплатно (legacy)", None),
+    ("buy_vpn", "buy_vpn", "💰 Купить подписку", STYLE_PRIMARY),
+    ("connect_vpn", "connect_vpn", "🔗 Подключить ВПН", STYLE_PRIMARY),
+    ("ref", "ref", "👥 Рефералка", None),
+    ("buy_gift", "buy_gift", "🎁 Подарить подписку", None),
+    ("start_gift", "start_gift", "🎁 Подарить подписку", None),
+    ("buy_tier_3", "buy_tier_3", "🔹 Тарифы на 3️⃣ устройства", None),
+    ("buy_tier_5", "buy_tier_5", "🔸 Тарифы на 5️⃣ устройств", None),
+    ("buy_tier_10", "buy_tier_10", "🏆 Тарифы на 🔟 устройств", None),
+    ("back_to_main", "back_to_main", "◀️ Назад", None),
+    ("ref_invite", "ref_invite", "Пригласить друзей🫶", None),
+    ("forever_sale_1", "r_5000sale", '✅ Получить "Навсегда" за 2790 ₽', None),
+    ("forever_sale_2", "r_5000sale", '🔥 Успеть оформить "Навсегда" за 2790 ₽', None),
+    ("forever_sale_3", "r_5000sale", '✨ Забрать "Навсегда" за 2790 ₽', None),
 ]
 
 
@@ -100,7 +114,7 @@ def _category_markup() -> InlineKeyboardMarkup:
     for key, label in CATEGORY_LABELS.items():
         b.button(text=label[:64], callback_data=f"{CB_CAT}{key}")
     b.adjust(1)
-    b.row(InlineKeyboardButton(text=BTN_BACK, callback_data="broadcast_cancel"))
+    b.row(emoji_button(text=BTN_BACK, callback_data="broadcast_cancel"))
     return b.as_markup()
 
 
@@ -108,13 +122,13 @@ def _audience_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Всем", callback_data=f"{CB_AUD}all"),
-                InlineKeyboardButton(
+                emoji_button(text="Всем", callback_data=f"{CB_AUD}all"),
+                emoji_button(
                     text="Не отсылать сегодняшним",
                     callback_data=f"{CB_AUD}skip_today",
                 ),
             ],
-            [InlineKeyboardButton(text=BTN_BACK, callback_data="broadcast_cancel")],
+            [emoji_button(text=BTN_BACK, callback_data="broadcast_cancel")],
         ]
     )
 
@@ -122,34 +136,34 @@ def _audience_markup() -> InlineKeyboardMarkup:
 def _keyboard_type_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Клавиатура выбора тарифа", callback_data=f"{CB_KB}tariff")],
-            [InlineKeyboardButton(text="Клавиатура стартовая", callback_data=f"{CB_KB}start")],
-            [InlineKeyboardButton(text="Без клавиатуры", callback_data=f"{CB_KB}none")],
-            [InlineKeyboardButton(text="Кастомные кнопки", callback_data=f"{CB_KB}custom")],
-            [InlineKeyboardButton(text=BTN_BACK, callback_data="broadcast_cancel")],
+            [emoji_button(text="Клавиатура с тарифами", callback_data=f"{CB_KB}tariff")],
+            [emoji_button(text="Клавиатура стартовая", callback_data=f"{CB_KB}start")],
+            [emoji_button(text="Без клавиатуры", callback_data=f"{CB_KB}none")],
+            [emoji_button(text="Кастомные кнопки", callback_data=f"{CB_KB}custom")],
+            [emoji_button(text=BTN_BACK, callback_data="broadcast_cancel")],
         ]
     )
 
 
 def _custom_presets_markup() -> InlineKeyboardMarkup:
+    from utils.custom_emoji import apply_button_icon
+
     b = InlineKeyboardBuilder()
-    for cb_id, text, _st in CUSTOM_PRESETS:
-        b.button(text=text[:64], callback_data=f"{BCBTN}{cb_id}")
+    for preset_id, _cb, text, _st in CUSTOM_PRESETS:
+        clean, eid = apply_button_icon(text)
+        kwargs = {"text": (clean or text)[:64], "callback_data": f"{BCBTN}{preset_id}"}
+        if eid:
+            kwargs["icon_custom_emoji_id"] = eid
+        b.button(**kwargs)
     b.adjust(2)
-    b.row(InlineKeyboardButton(text="Кнопка-ссылка", callback_data=f"{BCACT}link"))
+    b.row(emoji_button(text="Кнопка-ссылка", callback_data=f"{BCACT}link"))
     b.row(
-        InlineKeyboardButton(
-            text="Подарочная кнопка",
-            callback_data=f"{BCACT}tgift",
-        ),
-    )
-    b.row(
-        InlineKeyboardButton(
+        emoji_button(
             text="Завершить формирование клавиатуры",
             callback_data=f"{BCACT}done",
         ),
     )
-    b.row(InlineKeyboardButton(text=BTN_BACK, callback_data="broadcast_cancel"))
+    b.row(emoji_button(text=BTN_BACK, callback_data="broadcast_cancel"))
     return b.as_markup()
 
 
@@ -157,8 +171,8 @@ def _pin_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да", callback_data=f"{CB_PIN}y"),
-                InlineKeyboardButton(text="Нет", callback_data=f"{CB_PIN}n"),
+                emoji_button(text="Да", callback_data=f"{CB_PIN}y"),
+                emoji_button(text="Нет", callback_data=f"{CB_PIN}n"),
             ],
         ]
     )
@@ -168,8 +182,8 @@ def _confirm_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да", callback_data=f"{CB_CONF}y"),
-                InlineKeyboardButton(text="Нет", callback_data=f"{CB_CONF}n"),
+                emoji_button(text="Да", callback_data=f"{CB_CONF}y"),
+                emoji_button(text="Нет", callback_data=f"{CB_CONF}n"),
             ],
         ]
     )
@@ -179,28 +193,28 @@ def _link_style_choice_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
+                emoji_button(
                     text=LINK_STYLE_LABELS["primary"],
                     callback_data=f"{BCST}primary",
                     style=STYLE_PRIMARY,
                 ),
             ],
             [
-                InlineKeyboardButton(
+                emoji_button(
                     text=LINK_STYLE_LABELS["success"],
                     callback_data=f"{BCST}success",
                     style=STYLE_SUCCESS,
                 ),
             ],
             [
-                InlineKeyboardButton(
+                emoji_button(
                     text=LINK_STYLE_LABELS["danger"],
                     callback_data=f"{BCST}danger",
                     style=STYLE_DANGER,
                 ),
             ],
-            [InlineKeyboardButton(text=LINK_STYLE_LABELS["none"], callback_data=f"{BCST}none")],
-            [InlineKeyboardButton(text="Отмена добавления кнопки", callback_data=f"{BCACT}lcancel")],
+            [emoji_button(text=LINK_STYLE_LABELS["none"], callback_data=f"{BCST}none")],
+            [emoji_button(text="Отмена добавления кнопки", callback_data=f"{BCACT}lcancel")],
         ]
     )
 
@@ -208,12 +222,13 @@ def _link_style_choice_markup() -> InlineKeyboardMarkup:
 def _format_kb_spec_lines(spec: list) -> str:
     lines = []
     for i, entry in enumerate(spec, start=1):
-        if entry["kind"] == "cb":
-            cb = entry["cb"]
-            if isinstance(cb, str) and cb.startswith("trial_gift_"):
-                lines.append(f"{i}. {entry['text']} (подарок trial: {cb})")
-            else:
-                lines.append(f"{i}. {entry['text']} (callback: {cb})")
+        kind = entry["kind"]
+        if kind == "cb":
+            lines.append(f"{i}. {entry['text']} (callback: {entry['cb']})")
+        elif kind == "connect_links":
+            lines.append(
+                f"{i}. {entry['text']} (при нажатии — ссылки активных подписок)"
+            )
         else:
             st = entry.get("style")
             if st == STYLE_PRIMARY:
@@ -229,14 +244,22 @@ def _format_kb_spec_lines(spec: list) -> str:
 
 
 def _append_preset(spec: list, preset_id: str) -> None:
-    for cb_id, text, style in CUSTOM_PRESETS:
-        if cb_id == preset_id:
-            if preset_id == "ref_invite":
+    for pid, cb_id, text, style in CUSTOM_PRESETS:
+        if pid == preset_id:
+            if cb_id == "ref_invite":
                 spec.append(
                     {
                         "kind": "url",
                         "text": text,
                         "ref_invite": True,
+                        "style": style,
+                    }
+                )
+            elif cb_id == "connect_vpn":
+                spec.append(
+                    {
+                        "kind": "connect_links",
+                        "text": text,
                         "style": style,
                     }
                 )
@@ -252,18 +275,26 @@ def _build_custom_reply_markup(spec: list, target_user_id: int) -> InlineKeyboar
     for entry in spec:
         st = entry.get("style")
         if entry["kind"] == "cb":
-            btn = InlineKeyboardButton(
-                text=entry["text"],
-                callback_data=entry["cb"],
-                style=st,
-            )
+            kwargs = {"text": entry["text"], "callback_data": entry["cb"]}
+            if st:
+                kwargs["style"] = st
+            btn = emoji_button(**kwargs)
+            rows.append([btn])
+        elif entry["kind"] == "connect_links":
+            kwargs = {"text": entry["text"], "callback_data": BC_CONNECT_VPN}
+            if st:
+                kwargs["style"] = st
+            btn = emoji_button(**kwargs)
             rows.append([btn])
         else:
             if entry.get("ref_invite"):
                 url = _ref_invite_url(target_user_id)
             else:
                 url = str(entry["url"]).replace("{user_id}", str(target_user_id))
-            btn = InlineKeyboardButton(text=entry["text"], url=url, style=st)
+            kwargs = {"text": entry["text"], "url": url}
+            if st:
+                kwargs["style"] = st
+            btn = emoji_button(**kwargs)
             rows.append([btn])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -284,6 +315,42 @@ def _resolve_reply_markup(
     return None
 
 
+async def _user_active_connect_url_buttons(uid: int) -> list[tuple[str, str]]:
+    buttons: list[tuple[str, str]] = []
+    for slot, label, _uuid, username in await x3.active_subscription_slots(uid):
+        url = await x3.sublink(username)
+        if not url:
+            continue
+        text = _CONNECT_LINK_BTN_BY_SLOT.get(slot) or label
+        buttons.append((text, url))
+    return buttons
+
+
+def _markup_with_connect_links(
+    markup: InlineKeyboardMarkup | None,
+    url_buttons: list[tuple[str, str]],
+) -> InlineKeyboardMarkup:
+    link_rows = [
+        [emoji_button(text=text[:64], url=url, style=STYLE_PRIMARY)]
+        for text, url in url_buttons
+        if url
+    ]
+    if not markup or not markup.inline_keyboard:
+        return InlineKeyboardMarkup(inline_keyboard=link_rows)
+
+    new_rows: list[list[InlineKeyboardButton]] = []
+    replaced = False
+    for row in markup.inline_keyboard:
+        if any(getattr(btn, "callback_data", None) == BC_CONNECT_VPN for btn in row):
+            new_rows.extend(link_rows)
+            replaced = True
+        else:
+            new_rows.append(list(row))
+    if not replaced:
+        new_rows.extend(link_rows)
+    return InlineKeyboardMarkup(inline_keyboard=new_rows)
+
+
 def _broadcast_state_active(state_name: str | None) -> bool:
     return bool(state_name and state_name.startswith("BroadcastState"))
 
@@ -294,8 +361,6 @@ class BroadcastState(StatesGroup):
     waiting_for_audience = State()
     waiting_for_keyboard = State()
     custom_kb = State()
-    custom_gift_trial_text = State()
-    custom_gift_trial_days = State()
     custom_link_text = State()
     custom_link_url = State()
     custom_link_style = State()
@@ -389,8 +454,7 @@ async def broadcast_pick_keyboard(callback: CallbackQuery, state: FSMContext, bo
         await state.update_data(keyboard_mode="custom", custom_kb_spec=[])
         await callback.message.answer(
             "Добавьте кнопку — ниже список вариантов.\n"
-            "Можно добавить «Кнопка-ссылка» (текст и URL), «Подарочная кнопка» (триал в панели) "
-            "или завершить формирование.",
+            "Можно добавить «Кнопка-ссылка» (текст и URL) или завершить формирование.",
             reply_markup=_custom_presets_markup(),
         )
         await state.set_state(BroadcastState.custom_kb)
@@ -422,58 +486,6 @@ async def broadcast_custom_link_start(callback: CallbackQuery, state: FSMContext
     await callback.answer()
     await callback.message.answer("Введите текст кнопки-ссылки одним сообщением:")
     await state.set_state(BroadcastState.custom_link_text)
-
-
-@router.callback_query(F.data == f"{BCACT}tgift", StateFilter(BroadcastState.custom_kb))
-async def broadcast_custom_trial_gift_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.answer(
-        "Введите текст кнопки «подарка» одним сообщением (как она отобразится в рассылке):",
-    )
-    await state.set_state(BroadcastState.custom_gift_trial_text)
-
-
-@router.message(BroadcastState.custom_gift_trial_text)
-async def broadcast_custom_trial_gift_text(message: Message, state: FSMContext):
-    if not message.text or not message.text.strip():
-        await message.answer("Нужен непустой текст кнопки.")
-        return
-    await state.update_data(trial_gift_btn_text=message.text.strip()[:64])
-    await message.answer("Введите количество дней триала (целое число, например: 7):")
-    await state.set_state(BroadcastState.custom_gift_trial_days)
-
-
-@router.message(BroadcastState.custom_gift_trial_days)
-async def broadcast_custom_trial_gift_days(message: Message, state: FSMContext):
-    raw = (message.text or "").strip()
-    if not raw.isdigit() or int(raw) < 1 or int(raw) > 999:
-        await message.answer("Нужно целое число дней от 1 до 999.")
-        return
-    days = int(raw)
-    data = await state.get_data()
-    text = (data.get("trial_gift_btn_text") or "").strip()
-    if not text:
-        await message.answer("Сессия устарела. Начните «Подарочная кнопка» снова.")
-        await state.set_state(BroadcastState.custom_kb)
-        return
-    spec = list(data.get("custom_kb_spec") or [])
-    spec.append(
-        {
-            "kind": "cb",
-            "cb": f"trial_gift_{days}",
-            "text": text,
-            "style": STYLE_SUCCESS,
-        }
-    )
-    await state.update_data(
-        custom_kb_spec=spec,
-        trial_gift_btn_text=None,
-    )
-    await message.answer(
-        f"Кнопка добавлена. Ваша клавиатура:\n{_format_kb_spec_lines(spec)}",
-        reply_markup=_custom_presets_markup(),
-    )
-    await state.set_state(BroadcastState.custom_kb)
 
 
 @router.message(BroadcastState.custom_link_text)
@@ -751,6 +763,34 @@ async def cancel_broadcast(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer("Рассылка отменена.")
 
 
+@router.callback_query(F.data == BC_CONNECT_VPN)
+async def broadcast_connect_vpn_expand(callback: CallbackQuery):
+    uid = callback.from_user.id
+    try:
+        url_buttons = await _user_active_connect_url_buttons(uid)
+    except Exception as e:
+        logger.error(f"Broadcast connect_vpn links failed for {uid}: {e}")
+        await callback.answer("Не удалось получить ссылки. Попробуйте позже.", show_alert=True)
+        return
+    if not url_buttons:
+        await callback.answer("Нет активных подписок.", show_alert=True)
+        return
+
+    message = callback.message
+    if message is None or not hasattr(message, "edit_reply_markup"):
+        await callback.answer("Не удалось обновить кнопки.", show_alert=True)
+        return
+
+    new_markup = _markup_with_connect_links(getattr(message, "reply_markup", None), url_buttons)
+    try:
+        await message.edit_reply_markup(reply_markup=new_markup)
+    except TelegramBadRequest as e:
+        logger.warning(f"Broadcast connect_vpn edit_reply_markup failed for {uid}: {e}")
+        await callback.answer("Не удалось обновить кнопки.", show_alert=True)
+        return
+    await callback.answer()
+
+
 @router.message(Command("send_bot_api"))
 async def admin_broadcast(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -764,21 +804,21 @@ async def admin_broadcast(message: Message):
     success = 0
     blocked_updated = 0
     other_errors = 0
-    text = """
+    text = f"""
 🔥<b> Хорошие новости: Happ работает стабильно!</b>
 
-Если у вас бывают обрывы связи — не терпите. Просто смените приложение на <b>Happ</b> или сразу напишите нам в <a href="https://t.me/suppzoomvpn">Поддержку</a>. Мы всё починим 🤝
+Если у вас бывают обрывы связи — не терпите. Просто смените приложение на <b>Happ</b> или сразу напишите нам в <a href="{SUPPORT_URL}">Поддержку</a>. Мы всё починим 🤝
 
 📱 <b>Пользуетесь и всё нравится?</b>
-Поделитесь с теми, кому нужен надёжный и быстрый ВПН для своих — пусть тоже подключатся 😉
+Не жадничайте, скиньте этот пост контактам, у которых вечно нет нормального VPN. Сделайте им подарок 😉
         """
     button_text = "Пригласить друзей🫶"
     if CHECKER_ID is not None:
-        url = f"https://t.me/share/url?url=https://t.me/zoomerskyvpn_bot?start=ref{CHECKER_ID}&text={urllib.parse.quote('Держи ссылку на ВПН для своих — быстро и только для своих!')}"
+        url = _ref_invite_url(CHECKER_ID)
         send_message(chat_id=CHECKER_ID, text=text, button_text=button_text, url=url)
     for user_id in users:
         try:
-            url = f"https://t.me/share/url?url=https://t.me/zoomerskyvpn_bot?start=ref{user_id}&text={urllib.parse.quote('Держи ссылку на ВПН для своих — быстро и только для своих!')}"
+            url = _ref_invite_url(user_id)
             response = send_message(chat_id=user_id, text=text, button_text=button_text, url=url)
 
             if not response.get("ok") and response.get("error_code") == 403:

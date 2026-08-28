@@ -11,6 +11,7 @@ from bot import sql
 from config import ADMIN_IDS, BOT_URL, WATA_API_BASE, WATA_API_CARD_KEY, WATA_API_SBP_KEY
 from keyboard import keyboard_payment_sbp, create_kb
 from lexicon import lexicon, payment_tariff_summary_pro
+from utils.menu_ui import edit_or_send_photo
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
@@ -354,9 +355,11 @@ async def process_payment_wata_sbp(callback: CallbackQuery):
                 text += "\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:"
             else:
                 text += "\n\nДля оплаты тарифа перейдите по ссылке:"
-            await callback.message.edit_text(
-                text=text,
-                reply_markup=keyboard_payment_sbp("⚡ Оплатить СБП", payment_info["url"]),
+            await edit_or_send_photo(
+                callback,
+                "buy_subscription",
+                text,
+                keyboard_payment_sbp("⚡ Оплатить СБП", payment_info["url"]),
             )
             logger.info(f"Юзер {user_id} создал WATA СБП {rub_amount} руб")
         except Exception as e:
@@ -421,9 +424,11 @@ async def process_payment_wata_card(callback: CallbackQuery):
                 text += "\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:"
             else:
                 text += "\n\nДля оплаты тарифа перейдите по ссылке:"
-            await callback.message.edit_text(
-                text=text,
-                reply_markup=keyboard_payment_sbp("💳 Оплатить картой РФ", payment_info["url"]),
+            await edit_or_send_photo(
+                callback,
+                "buy_subscription",
+                text,
+                keyboard_payment_sbp("💳 Оплатить картой РФ", payment_info["url"]),
             )
             logger.info(f"Юзер {user_id} создал WATA Карта {rub_amount} руб")
         except Exception as e:

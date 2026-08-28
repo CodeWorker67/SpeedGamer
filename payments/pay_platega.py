@@ -8,6 +8,7 @@ from bot import sql
 from config import PLATEGA_API_KEY, PLATEGA_MERCHANT_ID, ADMIN_IDS, BOT_URL
 from keyboard import keyboard_payment_sbp, create_kb
 from lexicon import lexicon, payment_tariff_summary_pro
+from utils.menu_ui import edit_or_send_photo
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
@@ -241,9 +242,11 @@ async def process_payment_sbp(callback: CallbackQuery):
                 text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
             else:
                 text += '\n\nДля оплаты тарифа перейдите по ссылке:'
-            await callback.message.edit_text(
-                text=text,
-                reply_markup=keyboard_payment_sbp("💳 Оплатить через СБП", payment_info['url'])
+            await edit_or_send_photo(
+                callback,
+                "buy_subscription",
+                text,
+                keyboard_payment_sbp("💳 Оплатить через СБП", payment_info['url']),
             )
             logger.info(f"Юзер {user_id} создал счет на оплату {'подарка' if gift_flag else ''} {rub_amount} руб")
 
@@ -307,9 +310,11 @@ async def process_payment_card(callback: CallbackQuery):
                 text += '\n\nДля оплаты <b>подарочной подписки</b> перейдите по ссылке:'
             else:
                 text += '\n\nДля оплаты тарифа перейдите по ссылке:'
-            await callback.message.edit_text(
-                text=text,
-                reply_markup=keyboard_payment_sbp("💳 Оплатить по карте", payment_info['url'])
+            await edit_or_send_photo(
+                callback,
+                "buy_subscription",
+                text,
+                keyboard_payment_sbp("💳 Оплатить по карте", payment_info['url']),
             )
             logger.info(f"Юзер {user_id} создал счет на оплату по карте {'подарка' if gift_flag else ''} {rub_amount} руб")
 

@@ -1,12 +1,13 @@
 import aiohttp
 from typing import Dict, Optional
 from aiogram import F, Router
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import InlineKeyboardMarkup, CallbackQuery
 
 from bot import sql
 from config import CRYPTOBOT_API_TOKEN, ADMIN_IDS, BOT_URL
-from keyboard import create_kb, STYLE_PRIMARY
+from keyboard import create_kb, emoji_button
 from lexicon import lexicon, payment_tariff_summary_pro
+from utils.menu_ui import edit_or_send_photo
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
 from logging_config import logger
 
@@ -185,13 +186,12 @@ async def process_payment_crypto(callback: CallbackQuery):
         else:
             text += '\n\nДля оплаты тарифа перейдите по ссылке:'
         pay_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
+            [emoji_button(
                 text=f"💎 Оплатить криптовалютой ({rub_amount} ₽)",
                 url=result['url'],
-                style=STYLE_PRIMARY,
             )]
         ])
-        await callback.message.edit_text(text, reply_markup=pay_keyboard)
+        await edit_or_send_photo(callback, "buy_subscription", text, pay_keyboard)
         logger.info(f"Юзер {user_id} создал счет в Cryptobot на {rub_amount} руб {'(подарок)' if gift_flag else ''}")
     else:
         await callback.message.answer(

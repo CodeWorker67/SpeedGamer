@@ -27,7 +27,9 @@ from sheduler.time_mes_not_sub import send_push_cron
 from sheduler.backup_db import send_db_backup_cron
 from sheduler.check_wl_traffic import check_wl_traffic_cron
 from sheduler.accumulate_wl_traffic import accumulate_wl_traffic_cron
+from sheduler.credit_forever_wl_monthly import credit_forever_wl_monthly_cron
 from wl_traffic.constants import WL_ACCUMULATE_HOUR, WL_ACCUMULATE_MINUTE
+from utils.menu_photos import init_menu_photos
 from web_api import app as web_app
 
 
@@ -49,10 +51,10 @@ async def main() -> None:
     dp.include_router(handlers_broadcast.router)
     dp.include_router(handlers_discount_push.router)
     dp.include_router(handlers_admin.router)
+    dp.include_router(handlers_import.router)
+    dp.include_router(handlers_devices.router)
     dp.include_router(handlers_user.router)
     dp.include_router(handlers_wl_traffic.router)
-    dp.include_router(handlers_devices.router)
-    dp.include_router(handlers_import.router)
     dp.include_router(handlers_export.router)
     dp.include_router(handlers_statistic.router)
     # dp.include_router(pay_platega.router)
@@ -83,6 +85,16 @@ async def main() -> None:
         id='wl_traffic_accumulate',
         misfire_grace_time=600,
     )
+    scheduler.add_job(
+        credit_forever_wl_monthly_cron,
+        trigger='cron',
+        day=1,
+        hour=0,
+        minute=5,
+        args=[bot],
+        id='wl_forever_monthly',
+        misfire_grace_time=3600,
+    )
     scheduler.add_job(check_online_daily, 'cron', hour=2, minute=55, id='daily_online_stats', misfire_grace_time=60)
     scheduler.add_job(
         send_db_backup_cron,
@@ -96,6 +108,7 @@ async def main() -> None:
     scheduler.start()
 
     await set_commands(bot)
+    await init_menu_photos(bot)
 
     uv_config = uvicorn.Config(web_app, host="0.0.0.0", port=WEB_API_PORT)
     server = uvicorn.Server(uv_config)
