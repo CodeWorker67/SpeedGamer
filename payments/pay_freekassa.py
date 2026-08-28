@@ -335,11 +335,13 @@ def _duration_from_callback(data: str, prefix: str, gift_prefix: str) -> tuple[s
     return duration, gift_flag
 
 
-async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) -> None:
+async def _handle_fk_payment_callback(callback: CallbackQuery, ui_kind: UiKind) -> None:
     await callback.answer()
     data = callback.data or ""
-    prefix = "wata_sbp_r_" if ui_kind == "sbp" else "wata_card_r_"
-    gift_prefix = "wata_sbp_gift_r_" if ui_kind == "sbp" else "wata_card_gift_r_"
+    channel = "fk" if data.startswith("fk_") else "wata"
+    kind = "sbp" if ui_kind == "sbp" else "card"
+    prefix = f"{channel}_{kind}_r_"
+    gift_prefix = f"{channel}_{kind}_gift_r_"
     duration, gift_flag = _duration_from_callback(data, prefix, gift_prefix)
     desc_key = duration
     rub_amount, des_text = tariff_rub_and_desc(desc_key)
@@ -413,9 +415,19 @@ async def _handle_wata_style_callback(callback: CallbackQuery, ui_kind: UiKind) 
 
 @router.callback_query(F.data.startswith("wata_sbp_"))
 async def process_payment_fk_from_sbp_button(callback: CallbackQuery):
-    await _handle_wata_style_callback(callback, "sbp")
+    await _handle_fk_payment_callback(callback, "sbp")
 
 
 @router.callback_query(F.data.startswith("wata_card_"))
 async def process_payment_fk_from_card_button(callback: CallbackQuery):
-    await _handle_wata_style_callback(callback, "card")
+    await _handle_fk_payment_callback(callback, "card")
+
+
+@router.callback_query(F.data.startswith("fk_sbp_"))
+async def process_payment_fk_sbp_gift(callback: CallbackQuery):
+    await _handle_fk_payment_callback(callback, "sbp")
+
+
+@router.callback_query(F.data.startswith("fk_card_"))
+async def process_payment_fk_card_gift(callback: CallbackQuery):
+    await _handle_fk_payment_callback(callback, "card")
