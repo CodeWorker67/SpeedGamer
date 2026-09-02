@@ -1,18 +1,43 @@
-from datetime import date, datetime
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 import asyncio
 import os
 import tempfile
 
 import openpyxl
-from aiogram import Router
-from openpyxl.styles import Alignment, Border, Side
+from aiogram import F, Router
+from openpyxl.styles import Alignment, Border, Side, PatternFill
 
-from bot import sql, x3
+from bot import bot, sql, x3
 from config import ADMIN_IDS
 from config_bd.models import Users
+from config_bd.utils import (
+    _billing_duration_from_amount_fallback,
+    _parse_traffic_duration,
+    _payload_duration_to_panel_days,
+)
+from keyboard import STYLE_DANGER, STYLE_PRIMARY, STYLE_SUCCESS
 from logging_config import logger
-from aiogram.types import Message, FSInputFile
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from aiogram.filters import Command
+from telegram_ids import is_telegram_chat_id
+from tariff_resolve import device_from_tariff_key
+from utils.custom_emoji import emoji_button
+from wl_traffic.service import (
+    fetch_all_pro_panel_users,
+    is_forever_duration,
+    is_forever_end_date,
+    reassign_to_active_squad,
+    user_on_active_squad,
+)
 
 router = Router()
 
@@ -608,3 +633,728 @@ async def export_panel(message: Message):
     )
 
     logger.info(f"Администратор {message.from_user.id} выгрузил список пользователей панели")
+
+
+MSK = ZoneInfo("Europe/Moscow")
+_TRAFFIC_STAT_SNAPSHOT = date(2026, 8, 15)
+_TRAFFIC_STAT_SNAPSHOT_LABEL = "15.08"
+_TRAFFIC_STAT_MIN_REMAINING_DAYS = 14
+_TRAFFIC_STAT_TRAFFIC_GB = 7
+_TRAFFIC_STAT_GREEN = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+_TRAFFIC_STAT_YES_CB = "trafic_stat_yes"
+_TRAFFIC_STAT_NO_CB = "trafic_stat_no"
+_TRAFFIC_STAT_PROGRESS_EVERY = 50
+_TRAFFIC_STAT_PREVIEW_GB = 10
+_TRAFFIC_STAT_PENDING: dict[int, list[tuple[int, int, float]]] = {}
+_TRAFFIC_STAT_RUNNING: set[int] = set()
+_TRAFFIC_STAT_CONFIRM_KB = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="Да, разослать всем",
+                callback_data=_TRAFFIC_STAT_YES_CB,
+                style=STYLE_SUCCESS,
+            ),
+            InlineKeyboardButton(
+                text="Нет",
+                callback_data=_TRAFFIC_STAT_NO_CB,
+                style=STYLE_DANGER,
+            ),
+        ]
+    ]
+)
+_TRAFFIC_STAT_DEVICE_ORDER = (10, 5, 3)
+_TRAFFIC_STAT_BTN = {
+    3: "🔗 Подключить VPN (3 устройства)",
+    5: "🔗 Подключить VPN (5 устройств)",
+    10: "🔗 Подключить VPN (10 устройств)",
+}
+
+
+def _utc_naive(dt: datetime) -> datetime:
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _payment_msk_date(utc_naive: datetime) -> date:
+    return utc_naive.replace(tzinfo=timezone.utc).astimezone(MSK).date()
+
+
+def _payload_map(payload: Optional[str]) -> dict[str, str]:
+    if not payload:
+        return {}
+    out: dict[str, str] = {}
+    for part in payload.split(","):
+        if ":" not in part:
+            continue
+        k, _, v = part.partition(":")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _trafic_stat_amount_rub(
+    amount: Any,
+    payload: Optional[str],
+    channel: str,
+    currency: Optional[str],
+) -> Optional[int]:
+    from handlers.handlers_statistic import convert_crypto_to_rub, _stars_amount_to_rub
+
+    try:
+        raw = float(amount)
+    except (TypeError, ValueError):
+        raw = None
+
+    if channel == "stars":
+        if raw is None:
+            return None
+        mapped = _stars_amount_to_rub(int(round(raw)))
+        return mapped if mapped is not None else int(round(raw))
+
+    if channel == "cryptobot" and currency and currency.upper() != "RUB":
+        if raw is not None:
+            key = f"{raw:.1f}"
+            mapped = convert_crypto_to_rub(currency.upper(), key)
+            if mapped is not None:
+                return mapped
+        try:
+            return int(round(float(_payload_map(payload).get("amount", ""))))
+        except (TypeError, ValueError):
+            return None
+
+    if raw is None:
+        return None
+    return int(round(raw))
+
+
+def _trafic_stat_device_slots(m: dict[str, str]) -> int:
+    raw = m.get("device")
+    if raw is not None:
+        try:
+            n = int(raw)
+            if n in (3, 5, 10):
+                return n
+        except (TypeError, ValueError):
+            pass
+    return device_from_tariff_key(str(m.get("duration") or "").strip())
+
+
+def _classify_trafic_stat_payment(
+    payload: Optional[str],
+    is_gift: bool,
+    amount: Any,
+    channel: str,
+    currency: Optional[str],
+) -> Optional[dict]:
+    if is_gift:
+        return None
+    amount_rub = _trafic_stat_amount_rub(amount, payload, channel, currency)
+    if amount_rub == 1:
+        return None
+
+    m = _payload_map(payload)
+    if m.get("gift", "False").lower() == "true":
+        return None
+
+    raw_duration = m.get("duration")
+    traffic_gb = _parse_traffic_duration(raw_duration)
+    if traffic_gb is not None:
+        return {
+            "kind": "traffic",
+            "days": None,
+            "gb": traffic_gb,
+            "amount_rub": amount_rub,
+            "white": False,
+            "devices": None,
+        }
+
+    white = m.get("white", "False").lower() == "true"
+    days = _payload_duration_to_panel_days(raw_duration)
+    if days is None and amount_rub is not None:
+        days = _billing_duration_from_amount_fallback(amount_rub)
+    if days is None:
+        return None
+    devices = None if white else _trafic_stat_device_slots(m)
+    if devices not in (3, 5, 10):
+        devices = None if white else 5
+    return {
+        "kind": "subscription",
+        "days": days,
+        "gb": None,
+        "amount_rub": amount_rub,
+        "white": white,
+        "devices": devices,
+    }
+
+
+def _format_trafic_stat_purchase(pay_date: date, item: dict) -> str:
+    ds = pay_date.strftime("%d.%m.%y")
+    rub = item.get("amount_rub")
+    rub_s = "—" if rub is None else f"{rub} руб"
+    if item["kind"] == "traffic":
+        return f"{ds} - трафик {item['gb']} ГБ - {rub_s}"
+    devices = item.get("devices")
+    if item.get("white"):
+        return f"{ds} - подписка {item['days']} дней · mobile - {rub_s}"
+    if devices in (3, 5, 10):
+        return f"{ds} - подписка {item['days']} дней · {devices} устр. - {rub_s}"
+    return f"{ds} - подписка {item['days']} дней - {rub_s}"
+
+
+def _naive_dt(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _simulate_end_on_snapshot(
+    sub_pays: List[Tuple[datetime, int]],
+    snapshot: date,
+) -> Optional[datetime]:
+    end: Optional[datetime] = None
+    ordered = sorted(
+        (
+            (tc, days)
+            for tc, days in sub_pays
+            if days and _payment_msk_date(_utc_naive(tc)) <= snapshot
+        ),
+        key=lambda x: _utc_naive(x[0]),
+    )
+    for tc, days in ordered:
+        pay_t = _utc_naive(tc)
+        start = end if end is not None and end > pay_t else pay_t
+        end = start + timedelta(days=days)
+    return end
+
+
+def _end_date_as_of_snapshot(
+    current_end: Optional[datetime],
+    sub_pays: List[Tuple[datetime, int]],
+    snapshot: date,
+) -> Optional[datetime]:
+    """Текущая дата окончания минус дни подписки, купленные после snapshot (МСК)."""
+    current = _naive_dt(current_end)
+    if current is None:
+        return _simulate_end_on_snapshot(sub_pays, snapshot)
+
+    later = sorted(
+        (
+            (tc, days)
+            for tc, days in sub_pays
+            if days and _payment_msk_date(_utc_naive(tc)) > snapshot
+        ),
+        key=lambda x: _utc_naive(x[0]),
+        reverse=True,
+    )
+    end = current
+    for tc, days in later:
+        pay_date = _payment_msk_date(_utc_naive(tc))
+        old = end - timedelta(days=days)
+        if old.date() <= pay_date:
+            return _simulate_end_on_snapshot(sub_pays, snapshot)
+        end = old
+    return end
+
+
+def _trafic_stat_tg_id(user_id: int, linked: Optional[int]) -> int:
+    if user_id > 0:
+        return user_id
+    if linked is not None and linked > 0:
+        return linked
+    return user_id
+
+
+def _devices_from_panel_username(username: str) -> int:
+    if username.endswith("_10"):
+        return 10
+    if username.endswith("_3"):
+        return 3
+    return 5
+
+
+def _largest_slot_on_snapshot(
+    snap_by_devices: dict[int, Optional[datetime]],
+    snapshot: date,
+) -> Optional[int]:
+    """Самый большой тариф (10 > 5 > 3), который на snapshot ещё действовал."""
+    for devices in _TRAFFIC_STAT_DEVICE_ORDER:
+        snap_end = snap_by_devices.get(devices)
+        if snap_end is None:
+            continue
+        if is_forever_end_date(snap_end):
+            continue
+        if snap_end.date() >= snapshot:
+            return devices
+    return None
+
+
+def _build_trafic_stat_xlsx(
+    users: List[Tuple[
+        int, Optional[int],
+        Optional[datetime], Optional[datetime], Optional[datetime],
+        float, float,
+    ]],
+    payments: List[Tuple[int, datetime, Any, Optional[str], bool, str, Optional[str]]],
+) -> Tuple[str, int, list[tuple[int, int, float]]]:
+    snapshot = _TRAFFIC_STAT_SNAPSHOT
+    snap_label = _TRAFFIC_STAT_SNAPSHOT_LABEL
+    now_msk = datetime.now(MSK).replace(tzinfo=None)
+
+    pays_by_user: dict[int, list[tuple[datetime, dict]]] = defaultdict(list)
+    sub_days_by_user: dict[int, dict[int, list[tuple[datetime, int]]]] = defaultdict(
+        lambda: {3: [], 5: [], 10: []}
+    )
+    forever_paid: set[int] = set()
+    traffic_paid: set[int] = set()
+
+    for uid, tc, amt, pl, ig, channel, currency in payments:
+        item = _classify_trafic_stat_payment(pl, ig, amt, channel, currency)
+        if item is None:
+            continue
+        pays_by_user[uid].append((tc, item))
+        if item["kind"] == "traffic":
+            traffic_paid.add(uid)
+            continue
+        if item["kind"] == "subscription" and not item["white"] and item["days"]:
+            devices = item.get("devices") if item.get("devices") in (3, 5, 10) else 5
+            sub_days_by_user[uid][devices].append((tc, int(item["days"])))
+            if is_forever_duration(int(item["days"])):
+                forever_paid.add(uid)
+
+    rows_out: list[tuple] = []
+    apply_rows: list[tuple[int, int, float]] = []
+    for uid, linked, end5, end3, end10, trafic_wl, limit_wl in users:
+        if uid in forever_paid or uid in traffic_paid:
+            continue
+        if any(is_forever_end_date(dt) for dt in (end5, end3, end10)):
+            continue
+        current_by_devices = {5: end5, 3: end3, 10: end10}
+        slot_pays = sub_days_by_user.get(uid, {3: [], 5: [], 10: []})
+        snap_by_devices: dict[int, Optional[datetime]] = {}
+        for devices in (3, 5, 10):
+            snap_by_devices[devices] = _end_date_as_of_snapshot(
+                current_by_devices.get(devices),
+                slot_pays.get(devices, []),
+                snapshot,
+            )
+
+        chosen = _largest_slot_on_snapshot(snap_by_devices, snapshot)
+        if chosen is None:
+            continue
+        snap_end = snap_by_devices[chosen]
+        current_end = current_by_devices.get(chosen)
+        if snap_end is None:
+            continue
+        if is_forever_end_date(current_end) or is_forever_end_date(snap_end):
+            continue
+        remaining_days = (snap_end.date() - snapshot).days
+        if remaining_days <= _TRAFFIC_STAT_MIN_REMAINING_DAYS:
+            continue
+
+        current = _naive_dt(current_end)
+        still_active = current is not None and current > now_msk
+        high_traffic = float(trafic_wl or 0) > _TRAFFIC_STAT_TRAFFIC_GB
+        if not still_active or not high_traffic:
+            continue
+        recalc_gb = round(remaining_days / 30.0 * 10.0, 2)
+        tg_id = _trafic_stat_tg_id(uid, linked)
+        purchases = [
+            _format_trafic_stat_purchase(_payment_msk_date(_utc_naive(tc)), item)
+            for tc, item in sorted(pays_by_user.get(uid, []), key=lambda x: _utc_naive(x[0]))
+        ]
+        apply_rows.append((uid, tg_id, recalc_gb))
+        rows_out.append((
+            tg_id,
+            chosen,
+            snap_end.strftime("%d.%m.%y"),
+            current.strftime("%d.%m.%y") if current else "",
+            "True" if still_active else None,
+            trafic_wl,
+            "True" if high_traffic else None,
+            limit_wl,
+            recalc_gb,
+            purchases,
+            still_active,
+            high_traffic,
+        ))
+
+    rows_out.sort(key=lambda r: r[0])
+    apply_rows.sort(key=lambda r: r[1] if r[1] else r[0])
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "trafic_stat"
+
+    headers = [
+        "tg_id",
+        "Устройств",
+        f"Дата окончания на {snap_label}",
+        "Текущая дата окончания",
+        "Подписка активна",
+        "trafic_wl",
+        "trafic_wl > 7 ГБ",
+        "limit_wl",
+        "Пересчитанный трафик, ГБ",
+        "Покупки",
+    ]
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+    wrap_top = Alignment(wrap_text=True, vertical="top")
+    center = Alignment(horizontal="center", vertical="center")
+
+    for col_num, title in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=title)
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    for row_num, row in enumerate(rows_out, 2):
+        (
+            tg_id, chosen, snap_s, current_s, active_val, trafic_wl, traffic_val,
+            limit_wl, recalc_gb, purchases, still_active, high_traffic,
+        ) = row
+        values = [
+            tg_id,
+            chosen,
+            snap_s,
+            current_s,
+            active_val,
+            trafic_wl,
+            traffic_val,
+            limit_wl,
+            recalc_gb,
+            "\n".join(purchases),
+        ]
+        n_purchases = len(purchases)
+        for col_num, value in enumerate(values, 1):
+            cell = ws.cell(row=row_num, column=col_num, value=value)
+            cell.border = thin_border
+            if col_num == 10:
+                cell.alignment = wrap_top
+            else:
+                cell.alignment = center
+            if still_active and col_num in (4, 5):
+                cell.fill = _TRAFFIC_STAT_GREEN
+            if high_traffic and col_num in (6, 7):
+                cell.fill = _TRAFFIC_STAT_GREEN
+        if n_purchases:
+            ws.row_dimensions[row_num].height = min(18 * n_purchases, 180)
+
+    widths = {
+        1: 16,
+        2: 14,
+        3: 24,
+        4: 24,
+        5: 18,
+        6: 14,
+        7: 18,
+        8: 14,
+        9: 26,
+        10: 48,
+    }
+    for col, width in widths.items():
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
+
+    ws.auto_filter.ref = f"A1:J{max(1, len(rows_out) + 1)}"
+    ws.freeze_panes = "A2"
+
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    wb.save(path)
+    return path, len(rows_out), apply_rows
+
+
+def _trafic_stat_gb_label(gb: float) -> str:
+    n = round(float(gb), 2)
+    if n == int(n):
+        return str(int(n))
+    return f"{n:.2f}"
+
+
+def _trafic_stat_push_text(gb: float) -> str:
+    gb_s = _trafic_stat_gb_label(gb)
+    return (
+        "📊 ПЕРЕРАСЧЕТ ЛИМИТА ТРАФИКА\n"
+        "\n"
+        f"✅ Вам добавлено трафика на {gb_s} ГБ для сервера «Антиглушилка».\n"
+        "\n"
+        "🛡️ О сервере: Специальное решение для обхода «белых списков» операторов "
+        "и борьбы с глушением VPN на мобильном интернете.\n"
+        "\n"
+        "📲 Что делать: Просто обновите подписку в вашем приложении, "
+        "и сервер появится в общем списке для подключения.\n"
+        "\n"
+        "👇 Доступ уже ждет вас!"
+    )
+
+
+def _trafic_stat_connect_kb(links: list[tuple[str, str]]) -> Optional[InlineKeyboardMarkup]:
+    buttons = []
+    for text, url in links:
+        if not url:
+            continue
+        buttons.append(
+            [
+                emoji_button(
+                    text=text[:64],
+                    url=url,
+                    style=STYLE_PRIMARY,
+                )
+            ]
+        )
+    if not buttons:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _trafic_stat_connect_links(billing_uid: int) -> list[tuple[str, str]]:
+    """Ссылки на все активные PRO-подписки пользователя (3 / 5 / 10 устройств)."""
+    found: dict[int, str] = {}
+    try:
+        panel_users = await fetch_all_pro_panel_users(x3, billing_uid)
+    except Exception as e:
+        logger.warning("trafic_stat: panel users uid=%s: %s", billing_uid, e)
+        return []
+
+    for panel_user in panel_users:
+        if not x3._panel_user_is_active(panel_user):
+            continue
+        username = str(panel_user.get("username") or "")
+        if not username:
+            continue
+        try:
+            url = await x3.sublink(username)
+        except Exception as e:
+            logger.warning("trafic_stat: sublink uid=%s username=%s: %s", billing_uid, username, e)
+            url = ""
+        if not url:
+            continue
+        found[_devices_from_panel_username(username)] = str(url)
+
+    return [
+        (_TRAFFIC_STAT_BTN[devices], found[devices])
+        for devices in (3, 5, 10)
+        if devices in found
+    ]
+
+
+@router.message(Command(commands=["trafic_stat", "traffic_stat"]))
+async def trafic_stat_excel(message: Message):
+    """Активные PRO: на 15.08 > 2 недель по самой большой подписке, trafic_wl > 7, без покупок трафика."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    admin_id = message.from_user.id
+    snap_label = _TRAFFIC_STAT_SNAPSHOT_LABEL
+    await message.answer("🔄 Собираю выборку /trafic_stat и формирую Excel…")
+    try:
+        users, payments = await sql.get_trafic_stat_source()
+        path, n_rows, apply_rows = await asyncio.to_thread(
+            _build_trafic_stat_xlsx, users, payments
+        )
+        if n_rows == 0:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            _TRAFFIC_STAT_PENDING.pop(admin_id, None)
+            await message.answer(
+                f"Нет пользователей: активная подписка сейчас, на {snap_label} дольше 2 недель "
+                "(по самой большой из 3/5/10), trafic_wl > 7 ГБ, без «Навсегда» и без оплат трафика."
+            )
+            return
+        try:
+            fname = f"trafic_stat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            await message.answer_document(
+                document=FSInputFile(path, filename=fname),
+                caption=(
+                    f"В выборке {n_rows}: активная подписка сейчас, на {snap_label} дольше 2 недель, "
+                    "trafic_wl > 7 ГБ, без тарифа «Навсегда», без оплат трафика. "
+                    "Если у пользователя несколько тарифов (3/5/10 устройств) — все расчёты "
+                    f"по самому большому, который был активен на {snap_label}. "
+                    f"Дата окончания на {snap_label} = текущая дата этого тарифа минус дни подписки после {snap_label}. "
+                    f"Пересчитанный трафик: (дата окончания на {snap_label} − {snap_label}) / 30 × 10 ГБ. "
+                    "Покупки: успешные платежи (подписка), не подарки."
+                ),
+            )
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+        _TRAFFIC_STAT_PENDING[admin_id] = apply_rows
+        n_push = sum(1 for _, tg_id, _gb in apply_rows if is_telegram_chat_id(tg_id))
+        preview_links = await _trafic_stat_connect_links(admin_id)
+        if not preview_links and apply_rows:
+            preview_links = await _trafic_stat_connect_links(apply_rows[0][0])
+        await message.answer("Пример пуша (10 ГБ):")
+        await message.answer(
+            _trafic_stat_push_text(_TRAFFIC_STAT_PREVIEW_GB),
+            reply_markup=_trafic_stat_connect_kb(preview_links),
+        )
+        await message.answer(
+            f"Разослать по выборке: <b>{n_rows}</b> чел. "
+            f"(пуш уйдёт {n_push}, у кого есть Telegram id).\n"
+            "Каждому: сквад с белой нодой, +пересчитанный трафик в limit_wl, пуш.\n\n"
+            "Подтвердите рассылку по всем пользователям из Excel.",
+            reply_markup=_TRAFFIC_STAT_CONFIRM_KB,
+        )
+        logger.info(f"Администратор {admin_id} выгрузил /trafic_stat ({n_rows})")
+    except Exception as e:
+        logger.exception("Ошибка /trafic_stat")
+        await message.answer(f"❌ Ошибка при выгрузке: {e}")
+
+
+@router.callback_query(F.data == _TRAFFIC_STAT_NO_CB)
+async def trafic_stat_cancel(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    _TRAFFIC_STAT_PENDING.pop(callback.from_user.id, None)
+    await callback.answer()
+    await callback.message.edit_text("Рассылка /trafic_stat отменена.", reply_markup=None)
+
+
+@router.callback_query(F.data == _TRAFFIC_STAT_YES_CB)
+async def trafic_stat_confirm(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+
+    admin_id = callback.from_user.id
+    if admin_id in _TRAFFIC_STAT_RUNNING:
+        await callback.answer("Рассылка уже идёт.", show_alert=True)
+        return
+
+    apply_rows = _TRAFFIC_STAT_PENDING.pop(admin_id, None)
+    if not apply_rows:
+        await callback.answer()
+        await callback.message.edit_text(
+            "Список пуст. Повторите /trafic_stat.",
+            reply_markup=None,
+        )
+        return
+
+    await callback.answer()
+    total = len(apply_rows)
+    await callback.message.edit_text(
+        f"⏳ /trafic_stat: обработка {total} пользователей…",
+        reply_markup=None,
+    )
+
+    _TRAFFIC_STAT_RUNNING.add(admin_id)
+    admin_chat_id = callback.message.chat.id
+    squad_moved = 0
+    squad_already = 0
+    squad_failed = 0
+    limit_ok = 0
+    limit_failed = 0
+    pushed = 0
+    push_failed = 0
+    skipped_non_tg = 0
+
+    try:
+        for processed, (billing_uid, tg_id, recalc_gb) in enumerate(apply_rows, start=1):
+            if processed % _TRAFFIC_STAT_PROGRESS_EVERY == 0:
+                try:
+                    await bot.send_message(
+                        admin_chat_id,
+                        f"trafic_stat: {processed} / {total}, "
+                        f"limit {limit_ok}, squad {squad_moved}, push {pushed}",
+                    )
+                except Exception as notify_err:
+                    logger.warning(
+                        "trafic_stat: не удалось отправить прогресс админу: %s",
+                        notify_err,
+                    )
+
+            try:
+                await sql.add_wl_limit(billing_uid, recalc_gb)
+                limit_ok += 1
+            except Exception as e:
+                limit_failed += 1
+                logger.warning(
+                    "trafic_stat: add_wl_limit uid=%s gb=%s: %s",
+                    billing_uid,
+                    recalc_gb,
+                    e,
+                )
+
+            try:
+                panel_users = await fetch_all_pro_panel_users(x3, billing_uid)
+            except Exception as e:
+                logger.warning("trafic_stat: fetch panel uid=%s: %s", billing_uid, e)
+                panel_users = []
+
+            if not panel_users:
+                squad_failed += 1
+            else:
+                moved = 0
+                already = 0
+                failed = 0
+                for panel_user in panel_users:
+                    if user_on_active_squad(panel_user):
+                        already += 1
+                    elif await reassign_to_active_squad(x3, panel_user):
+                        moved += 1
+                    else:
+                        failed += 1
+                if moved:
+                    squad_moved += 1
+                elif already and not failed:
+                    squad_already += 1
+                else:
+                    squad_failed += 1
+
+            if not is_telegram_chat_id(tg_id):
+                skipped_non_tg += 1
+                await asyncio.sleep(0.05)
+                continue
+
+            try:
+                links = await _trafic_stat_connect_links(billing_uid)
+                await bot.send_message(
+                    chat_id=tg_id,
+                    text=_trafic_stat_push_text(recalc_gb),
+                    reply_markup=_trafic_stat_connect_kb(links),
+                )
+                pushed += 1
+            except Exception as e:
+                push_failed += 1
+                logger.warning("trafic_stat: push uid=%s tg=%s: %s", billing_uid, tg_id, e)
+
+            await asyncio.sleep(0.05)
+    finally:
+        _TRAFFIC_STAT_RUNNING.discard(admin_id)
+
+    await bot.send_message(
+        admin_chat_id,
+        (
+            "✅ <b>Готово (/trafic_stat)</b>\n\n"
+            f"• В выборке: <b>{total}</b>\n"
+            f"• +limit_wl: <b>{limit_ok}</b>\n"
+            f"• Squad → белая нода: <b>{squad_moved}</b>\n"
+            f"• Уже на белой ноде: {squad_already}\n"
+            f"• Push отправлено: <b>{pushed}</b>\n"
+            f"• Ошибка limit_wl: {limit_failed}\n"
+            f"• Ошибка squad: {squad_failed}\n"
+            f"• Ошибка push: {push_failed}\n"
+            f"• Пропущено (не Telegram chat_id): {skipped_non_tg}"
+        ),
+    )
+    logger.info(
+        "Админ %s /trafic_stat apply: total=%s limit=%s squad=%s pushed=%s",
+        admin_id,
+        total,
+        limit_ok,
+        squad_moved,
+        pushed,
+    )
