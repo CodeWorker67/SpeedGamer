@@ -28,6 +28,7 @@ from keyboard import (
     keyboard_start,
     keyboard_buy_device_tier,
 )
+from wl_traffic.constants import WL_TRAFFIC_BUY_CB
 from logging_config import logger
 from telegram_ids import is_telegram_chat_id
 from utils.menu_ui import CONNECT_BTN_BY_SLOT
@@ -66,6 +67,7 @@ CATEGORY_LABELS = {
     "not_connected_subscribe_off": "не подключены, подписка неактивна",
     "connected_subscribe_off": "подключены, подписка неактивна",
     "connected_subscribe_yes": "подключены, подписка активна",
+    "active_subscription": "с активной подпиской",
     "not_subscribed": "без подписки в панели",
     "connected_never_paid": "подключены, никогда не платили",
     "subscribed_all": "есть подписка в панели (с датой окончания)",
@@ -82,6 +84,7 @@ SCOPE_LABEL = {
 CUSTOM_PRESETS = [
     ("free_vpn", "free_vpn", "🔥 Попробовать бесплатно (legacy)", None),
     ("buy_vpn", "buy_vpn", "💰 Купить подписку", STYLE_PRIMARY),
+    ("buy_traffic", WL_TRAFFIC_BUY_CB, "📦 Купить трафик", STYLE_PRIMARY),
     ("connect_vpn", "connect_vpn", "🔗 Подключить ВПН", STYLE_PRIMARY),
     ("ref", "ref", "👥 Рефералка", None),
     ("buy_gift", "buy_gift", "🎁 Подарить подписку", None),

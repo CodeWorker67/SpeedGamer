@@ -1233,6 +1233,38 @@ class AsyncSQL:
                     Users.subscription_end_date > current_time,
                 )
             )
+        if category == "active_subscription":
+            from wl_traffic.constants import WL_TIMEZONE
+
+            today_start = (
+                datetime.now(WL_TIMEZONE)
+                .replace(hour=0, minute=0, second=0, microsecond=0)
+                .replace(tzinfo=None)
+            )
+            any_active = or_(
+                and_(
+                    Users.subscription_end_date.isnot(None),
+                    Users.subscription_end_date >= today_start,
+                ),
+                and_(
+                    Users.subscription_3_end_date.isnot(None),
+                    Users.subscription_3_end_date >= today_start,
+                ),
+                and_(
+                    Users.subscription_10_end_date.isnot(None),
+                    Users.subscription_10_end_date >= today_start,
+                ),
+                and_(
+                    Users.white_subscription_end_date.isnot(None),
+                    Users.white_subscription_end_date >= today_start,
+                ),
+            )
+            return wrap(
+                and_(
+                    Users.is_delete == False,
+                    any_active,
+                )
+            )
         if category == "not_subscribed":
             return wrap(
                 and_(
@@ -1470,6 +1502,7 @@ class AsyncSQL:
             "not_connected_subscribe_off",
             "connected_subscribe_off",
             "connected_subscribe_yes",
+            "active_subscription",
             "not_subscribed",
             "connected_never_paid",
             "subscribed_all",
