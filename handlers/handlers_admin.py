@@ -1448,6 +1448,39 @@ async def reset_field_bool_3_all_command(message: Message):
     logger.info(f"Админ {message.from_user.id}: сброс field_bool_3 для всех, обновлено строк: {n}")
 
 
+@router.message(Command(commands=['reset_is_delete']))
+async def reset_is_delete_command(message: Message):
+    """Сброс is_delete: для всех или одного пользователя по Telegram ID."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) == 1:
+        n = await sql.reset_all_delete_flag()
+        await message.answer(f"Готово: is_delete = false у {n} записей в users.")
+        logger.info(f"Админ {message.from_user.id}: сброс is_delete для всех, обновлено строк: {n}")
+        return
+
+    try:
+        user_id = int(args[1].strip())
+    except ValueError:
+        await message.answer(
+            "❌ Использование:\n"
+            "/reset_is_delete — сбросить у всех\n"
+            "/reset_is_delete <telegram_id> — сбросить у одного пользователя"
+        )
+        return
+
+    user_data = await sql.get_user(user_id)
+    if not user_data:
+        await message.answer(f"❌ Пользователь с ID {user_id} не найден в базе данных.")
+        return
+
+    await sql.update_delete(user_id, False)
+    await message.answer(f"Готово: is_delete = false для пользователя {user_id}.")
+    logger.info(f"Админ {message.from_user.id}: сброс is_delete для user_id={user_id}")
+
+
 @router.message(Command(commands=['add_7_to_all']))
 async def add_7_to_all_command(message: Message):
     """
