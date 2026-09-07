@@ -1992,7 +1992,28 @@ class AsyncSQL:
                 logger.error(f"❌ Ошибка создания подарка: {e}")
                 raise
 
-    async def add_online_stats(self, users_panel: int, users_active: int, users_pay: int, users_trial: int) -> None:
+    async def count_users_with_active_subscription(self) -> int:
+        """Число людей с хотя бы одной активной подпиской (end_date > now)."""
+        async with self.session_factory() as session:
+            now = datetime.now()
+            active_any = or_(
+                Users.subscription_end_date > now,
+                Users.subscription_3_end_date > now,
+                Users.subscription_10_end_date > now,
+                Users.white_subscription_end_date > now,
+            )
+            stmt = select(func.count()).select_from(Users).where(active_any)
+            result = await session.execute(stmt)
+            return int(result.scalar() or 0)
+
+    async def add_online_stats(
+        self,
+        users_panel: int,
+        users_active: int,
+        users_pay: int,
+        users_trial: int,
+        users_subscribed: int,
+    ) -> None:
         """
         Сохраняет ежедневную статистику онлайн-активности.
         """
@@ -2001,7 +2022,8 @@ class AsyncSQL:
                 users_panel=users_panel,
                 users_active=users_active,
                 users_pay=users_pay,
-                users_trial=users_trial
+                users_trial=users_trial,
+                users_subscribed=users_subscribed,
             )
             session.add(online_record)
             await session.commit()
