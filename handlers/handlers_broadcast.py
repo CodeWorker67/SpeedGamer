@@ -72,6 +72,7 @@ CATEGORY_LABELS = {
     "connected_never_paid": "подключены, никогда не платили",
     "subscribed_all": "есть подписка в панели (с датой окончания)",
     "never_bought_forever": "без тарифа Навсегда",
+    "no_sub_or_expired_over_10d": "Подписки нет или подписки просрочены более 10 дней",
     "all_users": "все пользователи",
 }
 
@@ -83,6 +84,7 @@ SCOPE_LABEL = {
 # (preset_id, callback_data, text, style)
 CUSTOM_PRESETS = [
     ("free_vpn", "free_vpn", "🔥 Попробовать бесплатно (legacy)", None),
+    ("get_trial", "get_trial", "7 дней бесплатно!", STYLE_SUCCESS),
     ("buy_vpn", "buy_vpn", "💰 Купить подписку", STYLE_PRIMARY),
     ("buy_traffic", WL_TRAFFIC_BUY_CB, "📦 Купить трафик", STYLE_PRIMARY),
     ("connect_vpn", "connect_vpn", "🔗 Подключить ВПН", STYLE_PRIMARY),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 from typing import Optional, Union
 
 from aiogram.exceptions import TelegramBadRequest
@@ -102,11 +103,17 @@ def has_active_device_subscription(user: Optional[Users]) -> bool:
     )
 
 
-def profile_caption(fullname: str, user: Optional[Users]) -> str:
+async def profile_caption(fullname: str, user: Optional[Users], uid: int) -> str:
     lines = [f"👤 {fullname}"]
-    for _slot, _n, label, attr in PROFILE_TIERS:
-        status = end_date_status_text(_tier_end(user, attr))
+    for slot, _n, label, attr in PROFILE_TIERS:
+        sub_end = _tier_end(user, attr)
+        status = end_date_status_text(sub_end)
         lines.append(f"📲 {label}: {status}")
+        if pro_subscription_end_active(sub_end):
+            username = panel_username_for_telegram_slot(uid, slot)
+            sub_url = await x3.sublink(username)
+            if sub_url:
+                lines.append(f"<code>{escape(str(sub_url))}</code>")
     return "\n".join(lines)
 
 
@@ -262,7 +269,7 @@ async def show_main_menu(
     user = source.from_user
     user_obj = await sql.get_user_object_by_user_id(user.id)
     fullname = user.full_name or user.first_name or "Пользователь"
-    caption = profile_caption(fullname, user_obj)
+    caption = await profile_caption(fullname, user_obj, user.id)
     active = has_active_device_subscription(user_obj)
 
     if send_hint and isinstance(source, Message):

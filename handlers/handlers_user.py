@@ -4,12 +4,12 @@ import urllib.parse
 import requests
 
 from bot import sql, x3, bot
-from config import CHANEL_ID, ADMIN_IDS, BOT_URL, PARTNER_PROCENT, PARTNER_MIN, PARTNER_SUPPORT_URL, PUBLIC_SITE_URL, SITE_URL
+from config import CHANEL_ID, ADMIN_IDS, BOT_URL, CHECKER_ID, PARTNER_PROCENT, PARTNER_MIN, PARTNER_SUPPORT_URL, PUBLIC_SITE_URL, SITE_URL
 from lead_tracker import post_user_registered, tracker_source_from_ref_and_stamp
 from keyboard import (create_kb, keyboard_start_bonus, ref_keyboard,
                       keyboard_buy_device_tier, keyboard_buy_duration,
                       keyboard_gift_device_tier, keyboard_gift_duration,
-                      keyboard_payment_method,
+                      keyboard_payment_method, keyboard_sub_after_buy,
                       keyboard_inline_ref, STYLE_PRIMARY,
                       keyboard_buy_menu, keyboard_earn_with_us, keyboard_about_service,
                       keyboard_partner_intro, keyboard_partner_dashboard,
@@ -26,24 +26,22 @@ from web_api import create_bot_site_login_token
 from logging_config import logger
 import asyncio
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, ChatMemberUpdated, InlineQuery, InlineQueryResultArticle, \
-    InputTextMessageContent, InlineKeyboardMarkup, InlineKeyboardButton
+    InputTextMessageContent, InlineKeyboardMarkup, InlineKeyboardButton, InaccessibleMessage
 from aiogram.filters import ChatMemberUpdatedFilter, KICKED, MEMBER, Command
 from lexicon import buy_text_for_pro_hwid, lexicon, payment_tariff_summary_pro, tariff_desc_key_from_payment_callback
 from datetime import datetime, timezone
 from tariff_resolve import panel_username
-from config_bd.utils import (
-    user_has_active_pro_subscription,
-    resolve_trial_device_slots,
-)
+from config_bd.utils import user_has_active_pro_subscription
 
 
 router: Router = Router()
 
 PRO_HWID_DEVICE_LIMIT = 5
 REFERRER_REF_BONUS_DAYS = 7
-_TRIAL_RETURN_GET_CB = "trial_return_get"
-_USER_TUPLE_FIELD_BOOL_3 = 26
+_TRIAL_DAYS = 7
+_TRIAL_DEVICE_SLOTS = 3
 
 _NEW_DEVICE_TARIFF_RE = re.compile(r'^(?:r_m(1|3|6|12)_d(3|5|10)|r_5000(?:sale)?)$')
 _GIFT_DEVICE_TARIFF_RE = re.compile(r'^gift_r_m(1|3|6|12)_d(3|5|10)$')
@@ -357,57 +355,118 @@ async def buy_back_to_tier(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data == _TRIAL_RETURN_GET_CB)
-async def trial_return_get_cb(callback: CallbackQuery):
-    """+7 дней по кнопке из рассылки /add_7_to_all (field_bool_3, тариф 3/5/10)."""
-    uid = callback.from_user.id
-    user_data = await sql.get_user(uid)
-    if user_data is None:
-        await sql.add_user(uid, False)
-        user_data = await sql.get_user(uid)
-
-    if user_data[_USER_TUPLE_FIELD_BOOL_3]:
-        await callback.answer("Вы уже взяли свой триал!", show_alert=True)
-        return
-
-    user = await sql.get_user_object_by_user_id(uid)
-    if user is None:
-        await callback.answer("Ошибка профиля. Попробуйте /start.", show_alert=True)
-        return
-
-    device_slots = resolve_trial_device_slots(user)
-    user_id_str = panel_username(uid, white=False, device_slots=device_slots)
-
-    await callback.answer()
-
-    panel_user = await x3.get_user_by_username(user_id_str)
-    if panel_user and panel_user.get("response"):
-        ok = await x3.updateClient(7, user_id_str, uid)
-    else:
-        ok = await x3.addClient(
-            7,
-            user_id_str,
-            uid,
-            hwid_device_limit=device_slots,
+async def _edit_callback_message_html(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup,
+) -> None:
+    message = callback.message
+    if message is None or isinstance(message, InaccessibleMessage):
+        await bot.send_message(
+            callback.from_user.id,
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=reply_markup,
         )
+        return
+    try:
+        if message.photo or message.video or message.animation or message.document:
+            await message.edit_caption(
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        else:
+            await message.edit_text(
+                text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=reply_markup,
+            )
+    except TelegramBadRequest as e:
+        logger.warning(f"edit callback message failed: {e}")
+        await bot.send_message(
+            callback.from_user.id,
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=reply_markup,
+        )
+
+
+async def _issue_pro_trial(
+    callback: CallbackQuery,
+    *,
+    days: int,
+    log_prefix: str,
+    notify_checker: bool = False,
+) -> bool:
+    uid = callback.from_user.id
+
+    user_id_str = panel_username(uid, white=False, device_slots=_TRIAL_DEVICE_SLOTS)
+    existing_user = await x3.get_user_by_username(user_id_str)
+    panel_exists = bool(existing_user and existing_user.get("response"))
+
+    try:
+        if panel_exists:
+            ok = await x3.updateClient(days, user_id_str, uid)
+        else:
+            ok = await x3.addClient(
+                days,
+                user_id_str,
+                uid,
+                hwid_device_limit=_TRIAL_DEVICE_SLOTS,
+            )
+    except Exception as e:
+        logger.error(f"{log_prefix}: ошибка панели для {uid}: {e}")
+        ok = False
 
     if not ok:
-        await callback.message.answer(
-            "Не удалось начислить дни. Попробуйте позже или напишите в поддержку."
-        )
-        return
+        await sql.update_field_bool_3(uid, False)
+        logger.error(f"{log_prefix}: не удалось выдать триал user={uid}")
+        try:
+            await callback.message.answer(
+                "Не удалось активировать триал. Попробуйте позже или напишите в поддержку."
+            )
+        except Exception:
+            pass
+        return False
 
-    await sql.update_in_panel(uid)
-    await sql.update_field_bool_3(uid, True)
+    if await sql.get_user(uid) is not None:
+        await sql.update_in_panel(uid)
+    else:
+        await sql.add_user(uid, True)
+
+    result_active = await x3.activ(user_id_str)
+    subscription_time = result_active.get("time", "-")
+    if subscription_time != "-":
+        try:
+            subscription_end_date = datetime.strptime(subscription_time, "%d-%m-%Y %H:%M МСК")
+            await sql.update_subscription_3_end_date(uid, subscription_end_date)
+        except ValueError as e:
+            logger.error(f"{log_prefix}: ошибка парсинга даты для {uid}: {e}")
+
     await sql.init_wl_trial_limits(uid)
-    await callback.message.answer(
-        "🎉 Поздравляем! Вы получили 7 триальных дней доступа к ВПН! ✨🔐",
-        reply_markup=create_kb(
-            1,
-            styles={"connect_vpn": STYLE_PRIMARY},
-            connect_vpn="🔗 Подключить ВПН",
-        ),
+
+    sub_link = await x3.sublink(user_id_str)
+    text = lexicon["trial_success"].format(subscription_time, days, sub_link)
+    await _edit_callback_message_html(callback, text, keyboard_sub_after_buy(sub_link))
+    logger.info(
+        f"{log_prefix}: триал активирован user={uid} username={user_id_str} days={days}"
     )
+
+    if notify_checker and CHECKER_ID is not None:
+        try:
+            await bot.send_message(
+                chat_id=CHECKER_ID,
+                text=f"Пользователь <code>{uid}</code> взял триал {days} дней",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"{log_prefix}: не удалось уведомить CHECKER_ID user={uid}: {e}")
+
+    return True
 
 
 async def _any_panel_pro_subscription_active(uid: int) -> bool:
@@ -429,6 +488,21 @@ async def _any_panel_pro_subscription_active(uid: int) -> bool:
     return False
 
 
+@router.callback_query(F.data == "get_trial")
+async def get_trial_cb(callback: CallbackQuery):
+    if not await sql.claim_broadcast_trial(callback.from_user.id):
+        await callback.answer("Вы уже воспользовались триалом", show_alert=True)
+        return
+
+    await callback.answer()
+    await _issue_pro_trial(
+        callback,
+        days=_TRIAL_DAYS,
+        log_prefix="get_trial",
+        notify_checker=True,
+    )
+
+
 @router.callback_query(F.data.startswith("trial_gift_"))
 async def trial_gift_broadcast_callback(callback: CallbackQuery):
     tail = (callback.data or "")[len("trial_gift_") :]
@@ -436,53 +510,17 @@ async def trial_gift_broadcast_callback(callback: CallbackQuery):
         await callback.answer("Некорректные данные кнопки.", show_alert=True)
         return
     days = int(tail)
-    uid = callback.from_user.id
 
-    ud = await sql.get_user(uid)
-
-    if ud is not None and len(ud) > 26 and ud[26]:
-        await callback.answer("Вы уже взяли свой триал!", show_alert=True)
+    if not await sql.claim_broadcast_trial(callback.from_user.id):
+        await callback.answer("Вы уже воспользовались триалом", show_alert=True)
         return
 
-    if ud is None:
-        await sql.add_user(uid, False)
-        ud = await sql.get_user(uid)
-
-    user_id_str = str(uid)
-    hwid_lim = PRO_HWID_DEVICE_LIMIT
-    existing_user = await x3.get_user_by_username(user_id_str)
-    if existing_user and "response" in existing_user and existing_user["response"]:
-        ok = await x3.updateClient(days, user_id_str, uid)
-    else:
-        ok = await x3.addClient(
-            days,
-            user_id_str,
-            uid,
-            hwid_device_limit=hwid_lim,
-        )
-
-    if not ok:
-        await callback.answer()
-        await callback.message.answer(
-            "Не удалось начислить дни. Попробуйте позже или напишите в поддержку."
-        )
-        return
-
-    if await sql.get_user(uid) is not None:
-        await sql.update_in_panel(uid)
-    else:
-        await sql.add_user(uid, True)
-
-    await sql.update_field_bool_3(uid, True)
-    await sql.init_wl_trial_limits(uid)
     await callback.answer()
-    await callback.message.answer(
-        f"🎉 Поздравляем! Вы получили {days} дней триального доступа к ВПН! ✨🔐",
-        reply_markup=create_kb(
-            1,
-            styles={"connect_vpn": STYLE_PRIMARY},
-            connect_vpn="🔗 Подключить ВПН",
-        ),
+    await _issue_pro_trial(
+        callback,
+        days=days,
+        log_prefix="trial_gift",
+        notify_checker=True,
     )
 
 

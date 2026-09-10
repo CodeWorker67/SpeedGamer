@@ -1,7 +1,7 @@
 import uuid
 import time
 
-from sqlalchemy import select, update, func, or_, and_, literal, union_all, case, delete, cast, Date
+from sqlalchemy import select, update, func, or_, and_, literal, union_all, case, delete, cast, Date, not_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List, Tuple, Dict, Any, Set
@@ -239,23 +239,6 @@ def user_leading_subscription_end_date(user: Users) -> Optional[datetime]:
     )
     non_none = [d for d in candidates if d is not None]
     return max(non_none) if non_none else None
-
-
-def resolve_trial_device_slots(user: Users) -> int:
-    """
-    Слот для +7 дней триала:
-    — нет PRO-подписок → 5 устройств;
-    — есть просроченные → тариф с максимальным числом устройств среди просроченных.
-    """
-    tiers = (
-        (5, user.subscription_end_date),
-        (3, user.subscription_3_end_date),
-        (10, user.subscription_10_end_date),
-    )
-    expired = [slots for slots, dt in tiers if dt is not None and not pro_subscription_end_active(dt)]
-    if not expired:
-        return 5
-    return max(expired)
 
 
 def _max_subscription_end_dates(
@@ -700,6 +683,19 @@ class AsyncSQL:
             await session.execute(stmt)
             await session.commit()
 
+    async def claim_broadcast_trial(self, user_id: int) -> bool:
+        """Атомарно резервирует broadcast-триал (field_bool_3). True — только у одного параллельного запроса."""
+        await self.add_user(user_id, False)
+        async with self.session_factory() as session:
+            stmt = (
+                update(Users)
+                .where(Users.user_id == user_id, Users.field_bool_3.is_(False))
+                .values(field_bool_3=True)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return int(result.rowcount or 0) > 0
+
     async def reset_field_bool_3_all(self) -> int:
         """Всем строкам users: field_bool_3 = False. Возвращает число обновлённых записей."""
         async with self.session_factory() as session:
@@ -837,31 +833,6 @@ class AsyncSQL:
             result = await session.execute(update(Users).values(field_bool_2=False))
             await session.commit()
             return int(result.rowcount or 0)
-
-    async def SELECT_USER_IDS_NO_ACTIVE_PRO_SUBSCRIPTION(self) -> List[int]:
-        """
-        Не удалены; для каждого тарифа PRO (3/5/10 устройств):
-        дата пуста (нет подписки) или окончание не позже чем 2 календарных дня назад (UTC).
-        """
-        today_utc = datetime.now(timezone.utc).date()
-        cutoff = today_utc - timedelta(days=2)
-
-        def _tier_eligible(col):
-            return or_(col.is_(None), cast(col, Date) <= cutoff)
-
-        async with self.session_factory() as session:
-            stmt = (
-                select(Users.user_id)
-                .where(
-                    Users.is_delete == False,
-                    _tier_eligible(Users.subscription_end_date),
-                    _tier_eligible(Users.subscription_3_end_date),
-                    _tier_eligible(Users.subscription_10_end_date),
-                )
-                .order_by(Users.user_id)
-            )
-            result = await session.execute(stmt)
-            return [row[0] for row in result.all()]
 
     async def get_last_notification_date(self, user_id: int) -> Optional[date]:
         async with self.session_factory() as session:
@@ -1174,6 +1145,45 @@ class AsyncSQL:
             .subquery()
         )
 
+    @staticmethod
+    def _broadcast_any_subscription_active(current_time: datetime):
+        from wl_traffic.constants import WL_TIMEZONE
+
+        today_start = (
+            datetime.now(WL_TIMEZONE)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .replace(tzinfo=None)
+        )
+        return or_(
+            and_(
+                Users.subscription_end_date.isnot(None),
+                Users.subscription_end_date >= today_start,
+            ),
+            and_(
+                Users.subscription_3_end_date.isnot(None),
+                Users.subscription_3_end_date >= today_start,
+            ),
+            and_(
+                Users.subscription_10_end_date.isnot(None),
+                Users.subscription_10_end_date >= today_start,
+            ),
+            and_(
+                Users.white_subscription_end_date.isnot(None),
+                Users.white_subscription_end_date >= today_start,
+            ),
+        )
+
+    @staticmethod
+    def _broadcast_latest_subscription_end_expr():
+        cols = (
+            Users.subscription_end_date,
+            Users.subscription_3_end_date,
+            Users.subscription_10_end_date,
+            Users.white_subscription_end_date,
+        )
+        all_null = and_(*[c.is_(None) for c in cols])
+        return case((all_null, None), else_=func.max(*cols))
+
     def _build_broadcast_where(self, category: str, exclude_today: bool):
         """
         Условие выборки пользователей для рассылки.
@@ -1314,6 +1324,19 @@ class AsyncSQL:
                     or_(
                         Users.subscription_end_date.is_(None),
                         Users.subscription_end_date < FOREVER_END_CUTOFF,
+                    ),
+                )
+            )
+        if category == "no_sub_or_expired_over_10d":
+            cutoff = current_time - timedelta(days=10)
+            latest_end = self._broadcast_latest_subscription_end_expr()
+            return wrap(
+                and_(
+                    Users.is_delete == False,
+                    not_(self._broadcast_any_subscription_active(current_time)),
+                    or_(
+                        latest_end.is_(None),
+                        latest_end < cutoff,
                     ),
                 )
             )
@@ -1507,6 +1530,7 @@ class AsyncSQL:
             "connected_never_paid",
             "subscribed_all",
             "never_bought_forever",
+            "no_sub_or_expired_over_10d",
             "all_users",
         ]
 
