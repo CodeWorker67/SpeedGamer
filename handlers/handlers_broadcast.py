@@ -742,9 +742,8 @@ async def broadcast_confirm_yes(callback: CallbackQuery, state: FSMContext, bot:
                 except Exception as notify_err:
                     logger.warning(f"Broadcast: не удалось отправить прогресс админу: {notify_err}")
         except Exception as e:
-            await sql.update_broadcast_status(uid, "failed")
-            await sql.update_delete(uid, True)
             logger.error(f"Failed to send message to {uid}: {e}")
+            await sql.mark_broadcast_failed(uid)
 
     logger.success(f"Send broadcast to {count} users")
     await bot.send_message(admin_chat_id, f"Сообщение успешно отправлено {count} пользователям.")

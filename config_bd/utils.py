@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import time
 
@@ -9,7 +10,7 @@ from typing import Optional, List, Tuple, Dict, Any, Set
 from config_bd.models import AsyncSessionLocal, Users, Payments, Gifts, PaymentsCryptobot, PaymentsStars, Online, \
     WhiteCounter, PaymentsCards, PaymentsPlategaCrypto, PaymentsWataSBP, PaymentsWataCard, PaymentsFkSBP, \
     LinkingCodes, PasswordResetCodes, WlTrafficMeta
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from lexicon import PAYMENT_MINOR_THRESHOLD_RUB, dct_price
 from logging_config import logger
 from tariff_resolve import tariff_days_for_x3
@@ -520,6 +521,40 @@ class AsyncSQL:
             stmt = update(Users).where(Users.user_id == user_id).values(is_delete=booly)
             await session.execute(stmt)
             await session.commit()
+
+    async def mark_broadcast_failed(self, user_id: int) -> None:
+        """Один commit: failed + is_delete. Лок SQLite не пробрасывается наружу."""
+        stmt = update(Users).where(Users.user_id == user_id).values(
+            last_broadcast_status="failed",
+            last_broadcast_date=datetime.now(),
+            is_delete=True,
+        )
+        last_err: Optional[Exception] = None
+        for attempt in range(3):
+            async with self.session_factory() as session:
+                try:
+                    await session.execute(stmt)
+                    await session.commit()
+                    return
+                except OperationalError as e:
+                    last_err = e
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
+                    msg = str(e).lower()
+                    if "database is locked" not in msg and "database is busy" not in msg:
+                        logger.error(f"Error marking broadcast failed for user {user_id}: {e}")
+                        return
+                except Exception as e:
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
+                    logger.error(f"Error marking broadcast failed for user {user_id}: {e}")
+                    return
+            await asyncio.sleep(0.3 * (attempt + 1))
+        logger.error(f"Error marking broadcast failed for user {user_id}: {last_err}")
 
     async def select_ref_count(self, user_id: int) -> int:
         async with self.session_factory() as session:
