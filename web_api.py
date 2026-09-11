@@ -200,7 +200,7 @@ _PRO_TARIFF_RE = re.compile(r"^m\d+_d\d+$")
 
 TARIFF_PUBLIC: list[tuple[str, str, int, bool]] = []
 for _devices in (3, 5, 10):
-    for _months, _label in ((1, "1 месяц"), (3, "3 месяца"), (6, "6 месяцев"), (12, "12 месяцев")):
+    for _months, _label in ((12, "12 месяцев"), (6, "6 месяцев"), (3, "3 месяца"), (1, "1 месяц")):
         _tid = f"m{_months}_d{_devices}"
         TARIFF_PUBLIC.append((_tid, f"{_label} · {_devices} устройств", _devices, False))
 
@@ -593,6 +593,7 @@ def _sub_page_device_item(device: dict[str, Any]) -> dict[str, str]:
         "deviceModel": str(device.get("deviceModel") or ""),
         "platform": str(device.get("platform") or ""),
         "osVersion": str(device.get("osVersion") or ""),
+        "userAgent": str(device.get("userAgent") or ""),
     }
 
 
