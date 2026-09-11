@@ -143,6 +143,23 @@ def _naive_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def normalize_partner_id(raw: Any) -> Optional[str]:
+    """partner_123456 или 123456 → '123456'; иначе None."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.startswith("partner_"):
+        s = s[len("partner_") :]
+    if not s.isdigit():
+        return None
+    pid = int(s)
+    if pid <= 0:
+        return None
+    return str(pid)
+
+
 def _user_tuple(user: Users) -> Tuple:
     return (
         user.id, user.user_id, user.ref, user.is_delete,
@@ -602,6 +619,59 @@ class AsyncSQL:
             stmt = update(Users).where(Users.user_id == user_id).values(partner_flag=flag)
             await session.execute(stmt)
             await session.commit()
+
+    async def attach_partner_if_empty(
+        self,
+        partner_raw: Any,
+        *,
+        telegram_user_id: Optional[int] = None,
+        internal_id: Optional[int] = None,
+    ) -> bool:
+        """Записывает partner только если поле пустое; не ставит пользователя партнёром самого себя."""
+        partner = normalize_partner_id(partner_raw)
+        if not partner:
+            return False
+        pid = int(partner)
+        if telegram_user_id is not None and pid == int(telegram_user_id):
+            return False
+
+        async with self.session_factory() as session:
+            if internal_id is not None:
+                user = await session.get(Users, internal_id)
+            elif telegram_user_id is not None:
+                stmt = select(Users).where(Users.user_id == telegram_user_id)
+                user = (await session.execute(stmt)).scalar_one_or_none()
+            else:
+                return False
+            if user is None:
+                return False
+            if (user.partner or "").strip():
+                return False
+            if user.user_id is not None and int(user.user_id) > 0 and int(user.user_id) == pid:
+                return False
+            user.partner = partner
+            await session.commit()
+            return True
+
+    async def ensure_telegram_user_with_partner(
+        self,
+        telegram_user_id: int,
+        partner_raw: Any,
+    ) -> None:
+        partner = normalize_partner_id(partner_raw)
+        if partner and int(partner) == int(telegram_user_id):
+            partner = None
+        user_row = await self.get_user(telegram_user_id)
+        if user_row is None:
+            await self.add_user(
+                telegram_user_id,
+                False,
+                False,
+                partner=partner or "",
+            )
+            return
+        if partner:
+            await self.attach_partner_if_empty(partner, telegram_user_id=telegram_user_id)
 
     async def add_partner_balance(self, partner_user_id: int, amount: int) -> bool:
         if amount <= 0:
@@ -2611,16 +2681,22 @@ class AsyncSQL:
             return nxt
 
     async def register_email_user(
-        self, email: str, password_hash: str, stamp: str = "email"
+        self,
+        email: str,
+        password_hash: str,
+        stamp: str = "email",
+        partner: str = "",
     ) -> int:
         em = _norm_email(email)
         uid = await self.next_negative_user_id()
+        partner_norm = normalize_partner_id(partner)
         async with self.session_factory() as session:
             u = Users(
                 user_id=uid,
                 email=em,
                 password_hash=password_hash,
                 stamp=stamp,
+                partner=partner_norm,
                 create_user=datetime.now(),
             )
             session.add(u)
@@ -2783,6 +2859,12 @@ class AsyncSQL:
             t.reserve_field = bool(t.reserve_field or e.reserve_field)
             if not (t.ref or "") and (e.ref or ""):
                 t.ref = e.ref
+            ep = (e.partner or "").strip()
+            if ep.isdigit() and int(ep) == telegram_user_id:
+                e.partner = None
+                ep = ""
+            if not (t.partner or "") and ep.isdigit() and int(ep) != telegram_user_id:
+                t.partner = ep
             if merged_email:
                 t.email = merged_email
             if merged_password_hash:
