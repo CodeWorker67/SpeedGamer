@@ -490,17 +490,19 @@ async def _any_panel_pro_subscription_active(uid: int) -> bool:
 
 @router.callback_query(F.data == "get_trial")
 async def get_trial_cb(callback: CallbackQuery):
-    if not await sql.claim_broadcast_trial(callback.from_user.id):
-        await callback.answer("Вы уже воспользовались триалом", show_alert=True)
-        return
+    await callback.answer("Акция закончилась", show_alert=True)
+    return
+    # if not await sql.claim_broadcast_trial(callback.from_user.id):
+    #     await callback.answer("Вы уже воспользовались триалом", show_alert=True)
+    #     return
 
-    await callback.answer()
-    await _issue_pro_trial(
-        callback,
-        days=_TRIAL_DAYS,
-        log_prefix="get_trial",
-        notify_checker=True,
-    )
+    # await callback.answer()
+    # await _issue_pro_trial(
+    #     callback,
+    #     days=_TRIAL_DAYS,
+    #     log_prefix="get_trial",
+    #     notify_checker=True,
+    # )
 
 
 @router.callback_query(F.data.startswith("trial_gift_"))
