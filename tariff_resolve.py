@@ -60,11 +60,15 @@ def panel_username_for_site_user(
 
 def device_from_tariff_key(duration_key_plain: str) -> int:
     """
-    Число устройств из ключа m{N}_d{D}; для legacy-ключей (30, 90, white_30, …) — DEFAULT_DEVICE_SLOTS.
+    Число устройств из ключа m{N}_d{D} или 120_d{D};
+    для legacy-ключей (30, 90, white_30, …) — DEFAULT_DEVICE_SLOTS.
     """
     m = re.fullmatch(r"m\d+_d(\d+)", duration_key_plain)
     if m:
         return int(m.group(1))
+    m120 = re.fullmatch(r"120_d(\d+)", duration_key_plain)
+    if m120:
+        return int(m120.group(1))
     return DEFAULT_DEVICE_SLOTS
 
 
@@ -85,6 +89,8 @@ def tariff_days_for_x3(duration_key_plain: str) -> int:
         return int(duration_key_plain.replace("new_", "", 1))
     if duration_key_plain in ("5000", "5000sale"):
         return 5000
+    if re.fullmatch(r"120_d\d+", duration_key_plain):
+        return 120
     m_md = re.fullmatch(r"m(\d+)_d(\d+)", duration_key_plain)
     if m_md:
         months = int(m_md.group(1))

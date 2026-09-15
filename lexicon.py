@@ -572,7 +572,9 @@ dct_price = {
     '7': 99,
     '30': 199,
     '90': 369,
-    '120': 369,
+    '120_d3': 90,
+    '120_d5': 90,
+    '120_d10': 90,
     '180': 699,
     'white_30': 399,
     # PRO: месяцы × устройства (ключ без префикса r_; в callback полный ключ r_m1_d3)
@@ -608,7 +610,9 @@ dct_desc = {
     '7': '🤌 7 дней - 99 ₽',
     '30': '🤝 30 дней - 199 ₽',
     '90': '👌 90 дней - 369 ₽',
-    '120': '🔥 Акция: 120 дней - 369 ₽',
+    '120_d3': '🔹 4 месяца — 3 устройства — 90 ₽',
+    '120_d5': '🔸 4 месяца — 5 устройств — 90 ₽',
+    '120_d10': '🏆 4 месяца — 10 устройств — 90 ₽',
     '180': '💪 180 дней - 699 ₽',
     'white_30': '🦾 Включи мобильный - 399 ₽',
     # Выгода % относительно помесячной оплаты по тому же числу устройств (округление до целого).
@@ -718,7 +722,9 @@ def payment_tariff_summary_pro(desc_key: str) -> str:
 
     days = tariff_days_for_x3(duration_plain)
     m = re.fullmatch(r'm(\d+)_d(\d+)', duration_plain)
-    if m:
+    if duration_plain.startswith('120_d'):
+        dur_line = 'Длительность - 4 месяца (акция 3+1, 120 дней)'
+    elif m:
         months = int(m.group(1))
         dur_line = _ru_month_duration_line(months)
     elif days >= 5000:
@@ -736,6 +742,14 @@ def payment_tariff_summary_pro(desc_key: str) -> str:
         f'\n'
         f'Сумма к оплате - {price}₽'
         f'{wl_bonus}'
+    )
+
+
+def promo_120_payment_caption(desc_key: str) -> str:
+    return (
+        '🎁 <b>Акция: 3 + 1 месяц в подарок!</b>\n'
+        'Оплачиваете 3 месяца — четвёртый в подарок.\n\n'
+        f'{payment_tariff_summary_pro(desc_key)}'
     )
 
 

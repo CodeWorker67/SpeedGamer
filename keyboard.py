@@ -565,6 +565,50 @@ def keyboard_payment_method(tarif):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def keyboard_promo_120_device_tier() -> InlineKeyboardMarkup:
+    """Выбор устройств для акции 4 месяца — без кнопки «Назад»."""
+    return create_kb(
+        1,
+        r_120_d3="🔹 3 устройства",
+        r_120_d5="🔸 5 устройств",
+        r_120_d10="🏆 10 устройств",
+    )
+
+
+def keyboard_payment_method_promo_120(tarif: str) -> InlineKeyboardMarkup:
+    """Способы оплаты акции 120 дней; «Назад» — снова выбор числа устройств."""
+    gift = str(tarif).startswith("gift_")
+    pay_prefix = "fk" if gift else "wata"
+    rows = [
+        [
+            emoji_button(
+                text="⚡ СБП",
+                callback_data=f"{pay_prefix}_sbp_{tarif}",
+            )
+        ],
+        [
+            emoji_button(
+                text="💳 Карта РФ",
+                callback_data=f"{pay_prefix}_card_{tarif}",
+            )
+        ],
+        [
+            emoji_button(
+                text="⭐️ Telegram Stars",
+                callback_data=f"stars_{tarif}",
+            )
+        ],
+        [
+            emoji_button(
+                text="💎 Crypto bot",
+                callback_data=f"crypto_{tarif}",
+            )
+        ],
+        [emoji_button(text=BTN_BACK, callback_data="r_120")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def keyboard_payment_method_stock(tarif):
     gift = str(tarif).startswith("gift_")
     pay_prefix = "fk" if gift else "wata"

@@ -14,7 +14,8 @@ from keyboard import (create_kb, keyboard_start_bonus, ref_keyboard,
                       keyboard_buy_menu, keyboard_earn_with_us, keyboard_about_service,
                       keyboard_partner_dashboard, keyboard_inline_partner,
                       keyboard_partner_withdraw, OPEN_SITE_CB, ABOUT_SERVICE_CB, BTN_BACK,
-                      partner_bot_link, partner_site_link, emoji_button)
+                      partner_bot_link, partner_site_link, emoji_button,
+                      keyboard_promo_120_device_tier, keyboard_payment_method_promo_120)
 from utils.menu_ui import (
     MAIN_MENU_BUTTON_TEXT,
     edit_or_send_photo,
@@ -30,7 +31,13 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, ChatMemberUpdated, InlineQuery, InlineQueryResultArticle, \
     InputTextMessageContent, InlineKeyboardMarkup, InlineKeyboardButton, InaccessibleMessage
 from aiogram.filters import ChatMemberUpdatedFilter, KICKED, MEMBER, Command
-from lexicon import buy_text_for_pro_hwid, lexicon, payment_tariff_summary_pro, tariff_desc_key_from_payment_callback
+from lexicon import (
+    buy_text_for_pro_hwid,
+    lexicon,
+    payment_tariff_summary_pro,
+    promo_120_payment_caption,
+    tariff_desc_key_from_payment_callback,
+)
 from datetime import datetime, timezone
 from tariff_resolve import panel_username
 from config_bd.utils import user_has_active_pro_subscription
@@ -45,6 +52,13 @@ _TRIAL_DEVICE_SLOTS = 3
 
 _NEW_DEVICE_TARIFF_RE = re.compile(r'^(?:r_m(1|3|6|12)_d(3|5|10)|r_5000(?:sale)?)$')
 _GIFT_DEVICE_TARIFF_RE = re.compile(r'^gift_r_m(1|3|6|12)_d(3|5|10)$')
+_PROMO_120_TARIFF_RE = re.compile(r'^r_120_d(3|5|10)$')
+
+_PROMO_120_DEVICES_CAPTION = (
+    '🎁 <b>Акция: 3 + 1 месяц в подарок!</b>\n'
+    'Оплачиваете 3 месяца — четвёртый в подарок.\n\n'
+    '⬇️ Выберите количество устройств ⬇️'
+)
 
 
 # Этот хэндлер срабатывает на команду /start
@@ -301,6 +315,32 @@ async def buy_vpn_self_cb(callback: CallbackQuery):
 async def direct_connect_vpn_cb(callback: CallbackQuery):
     await callback.answer()
     await show_connect_screen(callback)
+
+
+@router.callback_query(F.data == 'r_120')
+async def promo_120_choose_devices(callback: CallbackQuery):
+    await callback.answer()
+    await edit_or_send_photo(
+        callback,
+        'buy_subscription',
+        _PROMO_120_DEVICES_CAPTION,
+        keyboard_promo_120_device_tier(),
+    )
+
+
+@router.callback_query(F.data.regexp(_PROMO_120_TARIFF_RE))
+async def promo_120_payment_method(callback: CallbackQuery):
+    await callback.answer()
+    tariff = callback.data
+    dk = tariff_desc_key_from_payment_callback(tariff)
+    text = promo_120_payment_caption(dk)
+    text += '\n\nВыберите способ оплаты:'
+    await edit_or_send_photo(
+        callback,
+        'buy_subscription',
+        text,
+        keyboard_payment_method_promo_120(tariff),
+    )
 
 
 @router.callback_query(F.data.regexp(_NEW_DEVICE_TARIFF_RE))
