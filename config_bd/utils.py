@@ -447,9 +447,36 @@ class AsyncSQL:
                         out.add(int(uid))
         return out
 
+    async def sync_telegram_profile_if_missing(
+        self,
+        user_id: int,
+        *,
+        username: Optional[str] = None,
+        fullname: Optional[str] = None,
+    ) -> None:
+        if not username and not fullname:
+            return
+        async with self.session_factory() as session:
+            stmt = select(Users).where(Users.user_id == user_id)
+            user = (await session.execute(stmt)).scalar_one_or_none()
+            if user is None:
+                return
+            values: Dict[str, str] = {}
+            if username and not (user.username or "").strip():
+                values["username"] = username
+            if fullname and not (user.fullname or "").strip():
+                values["fullname"] = fullname
+            if not values:
+                return
+            await session.execute(
+                update(Users).where(Users.user_id == user_id).values(**values)
+            )
+            await session.commit()
+
     async def add_user(self, user_id: int, in_panel: bool, is_connect: bool = False,
                      ref: str = '', is_delete: bool = False, in_chanel: bool = False,
-                     stamp='', partner: str = '') -> bool:
+                     stamp='', partner: str = '', username: Optional[str] = None,
+                     fullname: Optional[str] = None) -> bool:
         """Возвращает True, если пользователь был вставлен; False если уже существовал (гонки /start)."""
         async with self.session_factory() as session:
             stmt = sqlite_insert(Users).values(
@@ -461,6 +488,8 @@ class AsyncSQL:
                 is_connect=is_connect,
                 in_chanel=in_chanel,
                 stamp=stamp,
+                username=username or None,
+                fullname=fullname or None,
             ).on_conflict_do_nothing(index_elements=[Users.user_id])
             try:
                 result = await session.execute(stmt)
@@ -594,6 +623,44 @@ class AsyncSQL:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
+    async def select_partner_paid_count(self, partner_id: int) -> int:
+        async with self.session_factory() as session:
+            stmt = select(func.count(Users.user_id)).where(
+                Users.partner == str(partner_id),
+                Users.reserve_field == True,
+            )
+            result = await session.execute(stmt)
+            return result.scalar() or 0
+
+    async def select_partner_referrals_payment_by_user(
+        self, partner_id: int
+    ) -> List[Tuple[int, int]]:
+        """Сумма успешных оплат каждого приведённого партнёром user_id, по убыванию суммы."""
+        async with self.session_factory() as session:
+            stmt = select(Users.user_id).where(Users.partner == str(partner_id))
+            user_ids = [int(row[0]) for row in (await session.execute(stmt)).all()]
+            if not user_ids:
+                return []
+
+            totals: Dict[int, int] = {uid: 0 for uid in user_ids}
+            for i in range(0, len(user_ids), _STAT_IN_CHUNK):
+                chunk = user_ids[i : i + _STAT_IN_CHUNK]
+                for model in _MERGE_PAYMENT_MODELS:
+                    stmt_sum = (
+                        select(model.user_id, func.coalesce(func.sum(model.amount), 0))
+                        .where(
+                            model.user_id.in_(chunk),
+                            model.status.in_(_BILLING_OK_STATUSES),
+                        )
+                        .group_by(model.user_id)
+                    )
+                    for uid, s in (await session.execute(stmt_sum)).all():
+                        totals[int(uid)] = totals.get(int(uid), 0) + int(s or 0)
+
+            out = [(uid, amt) for uid, amt in totals.items() if amt > 0]
+            out.sort(key=lambda x: x[1], reverse=True)
+            return out
+
     async def select_partner_referrals_payments_sum(self, partner_id: int) -> int:
         async with self.session_factory() as session:
             stmt = select(Users.user_id).where(Users.partner == str(partner_id))
@@ -613,6 +680,44 @@ class AsyncSQL:
                     val = (await session.execute(stmt_sum)).scalar() or 0
                     total += int(val)
             return total
+
+    async def select_partner_paid_count(self, partner_id: int) -> int:
+        async with self.session_factory() as session:
+            stmt = select(func.count(Users.user_id)).where(
+                Users.partner == str(partner_id),
+                Users.reserve_field == True,
+            )
+            result = await session.execute(stmt)
+            return result.scalar() or 0
+
+    async def select_partner_referrals_payment_by_user(
+        self, partner_id: int
+    ) -> List[Tuple[int, int]]:
+        """Сумма успешных оплат каждого приведённого партнёром user_id, по убыванию суммы."""
+        async with self.session_factory() as session:
+            stmt = select(Users.user_id).where(Users.partner == str(partner_id))
+            user_ids = [int(row[0]) for row in (await session.execute(stmt)).all()]
+            if not user_ids:
+                return []
+
+            totals: Dict[int, int] = {uid: 0 for uid in user_ids}
+            for i in range(0, len(user_ids), _STAT_IN_CHUNK):
+                chunk = user_ids[i : i + _STAT_IN_CHUNK]
+                for model in _MERGE_PAYMENT_MODELS:
+                    stmt_sum = (
+                        select(model.user_id, func.coalesce(func.sum(model.amount), 0))
+                        .where(
+                            model.user_id.in_(chunk),
+                            model.status.in_(_BILLING_OK_STATUSES),
+                        )
+                        .group_by(model.user_id)
+                    )
+                    for uid, s in (await session.execute(stmt_sum)).all():
+                        totals[int(uid)] = totals.get(int(uid), 0) + int(s or 0)
+
+            out = [(uid, amt) for uid, amt in totals.items() if amt > 0]
+            out.sort(key=lambda x: x[1], reverse=True)
+            return out
 
     async def update_partner_flag(self, user_id: int, flag: bool = True) -> None:
         async with self.session_factory() as session:
@@ -2627,6 +2732,223 @@ class AsyncSQL:
 
         rows_acc.sort(key=lambda x: (x[0], x[1]))
         return rows_acc
+
+    async def get_user_find_payments(
+        self, user_id: int
+    ) -> List[Tuple[datetime, str, str, int]]:
+        """
+        Успешные платежи для /find: (time_created, duration_part, label, amount_rub),
+        новые первыми.
+        """
+        rows_acc: List[Tuple[datetime, str, str, int]] = []
+
+        def _parse_map(payload: Optional[str]) -> Dict[str, str]:
+            if not payload:
+                return {}
+            out: Dict[str, str] = {}
+            for part in payload.split(","):
+                if ":" not in part:
+                    continue
+                k, _, v = part.partition(":")
+                out[k.strip()] = v.strip()
+            return out
+
+        def _device_slots_from_payload(m: Dict[str, str]) -> int:
+            raw = m.get("device")
+            if raw is None:
+                return 5
+            try:
+                n = int(raw)
+            except (TypeError, ValueError):
+                return 5
+            return n if n in (3, 5, 10) else 5
+
+        def _find_row(
+            tc: datetime,
+            payload: Optional[str],
+            is_gift: bool,
+            amount: Any,
+        ) -> Tuple[str, str, int]:
+            m = _parse_map(payload)
+            traffic_gb = _parse_traffic_duration(m.get("duration"))
+            try:
+                amount_rub = int(round(float(amount)))
+            except (TypeError, ValueError):
+                amount_rub = 0
+
+            if traffic_gb is not None:
+                return f"{traffic_gb}ГБ", "Трафик", amount_rub
+
+            raw_duration = m.get("duration")
+            dur = _payload_duration_to_panel_days(raw_duration)
+            if dur is None:
+                try:
+                    amt_f = float(amount)
+                except (TypeError, ValueError):
+                    amt_f = None
+                white = m.get("white", "False").lower() == "true"
+                if amt_f is not None:
+                    if white:
+                        dur = _white_days_from_amount_fallback(amt_f)
+                    else:
+                        dur = _billing_duration_from_amount_fallback(amt_f)
+
+            slots = _device_slots_from_payload(m)
+            duration_part = f"{dur} дн." if dur is not None else "—"
+            label = f"Подписка {slots} уст."
+            if is_gift or m.get("gift", "False").lower() == "true":
+                label = f"Подарок · {label}"
+            return duration_part, label, amount_rub
+
+        async with self.session_factory() as session:
+            queries: List[Any] = [
+                select(
+                    Payments.time_created, Payments.amount, Payments.payload, Payments.is_gift,
+                ).where(
+                    Payments.user_id == user_id,
+                    Payments.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsCards.time_created, PaymentsCards.amount, PaymentsCards.payload, PaymentsCards.is_gift,
+                ).where(
+                    PaymentsCards.user_id == user_id,
+                    PaymentsCards.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsPlategaCrypto.time_created,
+                    PaymentsPlategaCrypto.amount,
+                    PaymentsPlategaCrypto.payload,
+                    PaymentsPlategaCrypto.is_gift,
+                ).where(
+                    PaymentsPlategaCrypto.user_id == user_id,
+                    PaymentsPlategaCrypto.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsWataSBP.time_created,
+                    PaymentsWataSBP.amount,
+                    PaymentsWataSBP.payload,
+                    PaymentsWataSBP.is_gift,
+                ).where(
+                    PaymentsWataSBP.user_id == user_id,
+                    PaymentsWataSBP.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsWataCard.time_created,
+                    PaymentsWataCard.amount,
+                    PaymentsWataCard.payload,
+                    PaymentsWataCard.is_gift,
+                ).where(
+                    PaymentsWataCard.user_id == user_id,
+                    PaymentsWataCard.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsFkSBP.time_created,
+                    PaymentsFkSBP.amount,
+                    PaymentsFkSBP.payload,
+                    PaymentsFkSBP.is_gift,
+                ).where(
+                    PaymentsFkSBP.user_id == user_id,
+                    PaymentsFkSBP.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsStars.time_created,
+                    PaymentsStars.amount,
+                    PaymentsStars.payload,
+                    PaymentsStars.is_gift,
+                ).where(
+                    PaymentsStars.user_id == user_id,
+                    PaymentsStars.status.in_(_BILLING_OK_STATUSES),
+                ),
+                select(
+                    PaymentsCryptobot.time_created,
+                    PaymentsCryptobot.amount,
+                    PaymentsCryptobot.payload,
+                    PaymentsCryptobot.is_gift,
+                ).where(
+                    PaymentsCryptobot.user_id == user_id,
+                    PaymentsCryptobot.status.in_(_BILLING_OK_STATUSES),
+                ),
+            ]
+            for q in queries:
+                for tc, amt, pl, ig in (await session.execute(q)).all():
+                    if tc is None:
+                        continue
+                    dur_part, label, amount_rub = _find_row(tc, pl, bool(ig), amt)
+                    rows_acc.append((tc, dur_part, label, amount_rub))
+
+        rows_acc.sort(key=lambda x: x[0], reverse=True)
+        return rows_acc
+
+    async def find_payment_by_transaction_id(
+        self, transaction_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Поиск платежа по transaction_id (или invoice_id у CryptoBot) во всех таблицах."""
+        tid = (transaction_id or "").strip()
+        if not tid:
+            return None
+
+        def _parse_map(payload: Optional[str]) -> Dict[str, str]:
+            if not payload:
+                return {}
+            out: Dict[str, str] = {}
+            for part in payload.split(","):
+                if ":" not in part:
+                    continue
+                k, _, v = part.partition(":")
+                out[k.strip()] = v.strip()
+            return out
+
+        def _duration_text(payload: Optional[str]) -> str:
+            m = _parse_map(payload)
+            traffic_gb = _parse_traffic_duration(m.get("duration"))
+            if traffic_gb is not None:
+                return f"{traffic_gb} ГБ"
+            dur = _payload_duration_to_panel_days(m.get("duration"))
+            return f"{dur} дн." if dur is not None else "—"
+
+        table_specs: List[Tuple[Any, str, Optional[str]]] = [
+            (Payments, "payments", "transaction_id"),
+            (PaymentsCards, "payments_cards", "transaction_id"),
+            (PaymentsPlategaCrypto, "payments_platega_crypto", "transaction_id"),
+            (PaymentsWataSBP, "payments_wata_sbp", "transaction_id"),
+            (PaymentsWataCard, "payments_wata_card", "transaction_id"),
+            (PaymentsFkSBP, "payments_fk_sbp", "transaction_id"),
+            (PaymentsCryptobot, "payments_cryptobot", "invoice_id"),
+        ]
+
+        async with self.session_factory() as session:
+            for model, table_name, id_col in table_specs:
+                col = getattr(model, id_col)
+                stmt = select(model).where(col == tid)
+                row = (await session.execute(stmt)).scalar_one_or_none()
+                if row is None:
+                    continue
+                payload = getattr(row, "payload", None)
+                m = _parse_map(payload)
+                method = m.get("method")
+                if not method and table_name == "payments_fk_sbp":
+                    method = getattr(row, "method", None)
+                if not method and table_name == "payments_cryptobot":
+                    method = "cryptobot"
+                if not method and table_name == "payments_wata_sbp":
+                    method = "wata_sbp"
+                if not method and table_name == "payments_wata_card":
+                    method = "wata_card"
+                try:
+                    amount = int(round(float(row.amount)))
+                except (TypeError, ValueError):
+                    amount = row.amount
+                return {
+                    "table": table_name,
+                    "status": row.status,
+                    "time_created": row.time_created,
+                    "user_id": int(row.user_id),
+                    "duration": _duration_text(payload),
+                    "is_gift": bool(getattr(row, "is_gift", False)),
+                    "method": method or "—",
+                    "amount": amount,
+                }
+        return None
 
     async def get_trafic_stat_source(
         self,

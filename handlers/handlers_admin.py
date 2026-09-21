@@ -251,19 +251,33 @@ async def _partner_admin_stats_text(tg_id: int) -> Optional[str]:
         return None
 
     referrals = await sql.select_partner_count(tg_id)
+    referrals_paid = await sql.select_partner_paid_count(tg_id)
     payments_sum = await sql.select_partner_referrals_payments_sum(tg_id)
     balance = user.partner_balance or 0
     paid_out = user.partner_pay or 0
     total_earned = balance + paid_out
 
-    return (
-        f"📊 <b>Статистика {tg_id}:</b>\n\n"
-        f"👥 Друзей перешло (/start): <b>{referrals}</b>\n"
-        f"💳 Приобретено подписок друзьями на: <b>{payments_sum} ₽</b>\n\n"
-        f"💵 Заработок партнёра (всего): <b>{total_earned} ₽</b>\n"
-        f"✅ Выведено: <b>{paid_out} ₽</b>\n"
-        f"🏦 Осталось на вывод: <b>{balance} ₽</b>"
-    )
+    lines = [
+        f"📊 <b>Статистика {tg_id}:</b>\n",
+        f"👥 Партнёров перешло (/start): <b>{referrals}</b>"
+        + (f" (оплатило: <b>{referrals_paid}</b>)" if referrals else ""),
+        f"💳 Сумма оплат партнёров: <b>{payments_sum} ₽</b>\n",
+        f"💵 Заработок партнёра (всего): <b>{total_earned} ₽</b>",
+        f"✅ Выведено: <b>{paid_out} ₽</b>",
+        f"🏦 Осталось на вывод: <b>{balance} ₽</b>",
+    ]
+
+    breakdown = await sql.select_partner_referrals_payment_by_user(tg_id)
+    if breakdown:
+        lines.append("\n<b>Оплаты партнёров</b>")
+        shown = breakdown[:30]
+        for uid, rub in shown:
+            lines.append(f"{uid} — {rub} ₽")
+        rest = len(breakdown) - len(shown)
+        if rest > 0:
+            lines.append(f"<i>…и ещё {rest} партнёров</i>")
+
+    return "\n".join(lines)
 
 
 @router.message(Command(commands=['partner']))
@@ -525,7 +539,8 @@ async def add_traffic_command(message: Message):
     if len(args) < 3:
         await message.answer(
             "❌ Использование: /add_traffic <telegram_id> <GB>\n"
-            "Например: /add_traffic 123456789 10"
+            "Например: /add_traffic 123456789 10\n"
+            "Отрицательное значение уменьшает лимит: /add_traffic 123456789 -5"
         )
         return
 
@@ -536,8 +551,8 @@ async def add_traffic_command(message: Message):
         await message.answer("❌ ID и количество GB должны быть числами.")
         return
 
-    if gb <= 0:
-        await message.answer("❌ Количество GB должно быть больше 0.")
+    if gb == 0:
+        await message.answer("❌ Укажите ненулевое изменение лимита в GB.")
         return
 
     user = await sql.get_user_object_by_user_id(target_id)
@@ -562,19 +577,20 @@ async def add_traffic_command(message: Message):
             else:
                 squad_note = "\n⚠️ Не удалось переназначить squad в панели"
 
+    gb_sign = "+" if gb > 0 else ""
     admin_text = (
-        f"✅ <b>Добавлено {gb:g} GB</b> для user <code>{target_id}</code>{squad_note}\n\n"
+        f"✅ <b>Изменение лимита {gb_sign}{gb:g} GB</b> для user <code>{target_id}</code>{squad_note}\n\n"
         f"├ Использовано: <b>{used_gb:.2f} GB</b>\n"
         f"├ Лимит: <b>{limit_wl:.2f} GB</b>\n"
         f"└ Осталось: <b>{remaining_gb:.2f} GB</b>"
     )
     await message.answer(admin_text, parse_mode="HTML")
     logger.info(
-        f"Админ {message.from_user.id}: /add_traffic uid={target_id} +{gb:g} GB "
+        f"Админ {message.from_user.id}: /add_traffic uid={target_id} {gb_sign}{gb:g} GB "
         f"used={used_gb:.2f} limit={limit_wl:.2f}"
     )
 
-    if target_id > 0:
+    if target_id > 0 and gb > 0:
         try:
             await bot.send_message(
                 chat_id=target_id,
@@ -1556,3 +1572,8 @@ async def add_7_sub_command(message: Message):
         f"• Без дат подписки (пропуск): {skipped_no_subs}\n"
         f"• Не Telegram chat_id (продлено, без сообщения): {skipped_non_tg}"
     )
+
+
+from handlers.admin_lookup import router as _admin_lookup_router
+
+router.include_router(_admin_lookup_router)

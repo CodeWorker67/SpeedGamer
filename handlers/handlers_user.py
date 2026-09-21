@@ -41,9 +41,19 @@ from lexicon import (
 from datetime import datetime, timezone
 from tariff_resolve import panel_username
 from config_bd.utils import user_has_active_pro_subscription
+from handlers.user_profile_sync import (
+    SyncTelegramProfileMiddleware,
+    tg_profile_fields,
+)
 
 
 router: Router = Router()
+_profile_sync_mw = SyncTelegramProfileMiddleware()
+router.message.middleware(_profile_sync_mw)
+router.callback_query.middleware(_profile_sync_mw)
+router.inline_query.middleware(_profile_sync_mw)
+router.my_chat_member.middleware(_profile_sync_mw)
+router.chat_member.middleware(_profile_sync_mw)
 
 PRO_HWID_DEVICE_LIMIT = 5
 REFERRER_REF_BONUS_DAYS = 7
@@ -139,7 +149,7 @@ async def process_start_command(message: Message, command: Command):
             else:
                 await message.answer("❌ Ссылка устарела. Попробуйте ещё раз на сайте.")
             if not user_data:
-                await sql.add_user(message.from_user.id, False, False)
+                await _add_user_with_profile(message.from_user, False, False)
             existing = True
 
         elif start_arg.startswith('gift_') or 'gift_' in start_arg:
@@ -196,8 +206,8 @@ async def process_start_command(message: Message, command: Command):
                 stamp = start_arg
 
     if not existing:
-        inserted = await sql.add_user(
-            message.from_user.id, False, False,
+        inserted = await _add_user_with_profile(
+            message.from_user, False, False,
             ref=ref_login, stamp=stamp, partner=partner_login,
         )
         if inserted:
@@ -476,7 +486,7 @@ async def _issue_pro_trial(
     if await sql.get_user(uid) is not None:
         await sql.update_in_panel(uid)
     else:
-        await sql.add_user(uid, True)
+        await _add_user_with_profile(callback.from_user, True)
 
     result_active = await x3.activ(user_id_str)
     subscription_time = result_active.get("time", "-")
@@ -624,9 +634,24 @@ async def referral_program(callback: CallbackQuery):
     )
 
 
-async def _ensure_user_exists(user_id: int) -> None:
+async def _add_user_with_profile(from_user, in_panel: bool, is_connect: bool = False, **kwargs) -> bool:
+    username, fullname = tg_profile_fields(from_user)
+    return await sql.add_user(
+        from_user.id,
+        in_panel,
+        is_connect,
+        username=username,
+        fullname=fullname,
+        **kwargs,
+    )
+
+
+async def _ensure_user_exists(user_id: int, from_user=None) -> None:
     if await sql.get_user(user_id) is None:
-        await sql.add_user(user_id, False, False)
+        if from_user is not None:
+            await _add_user_with_profile(from_user, False, False)
+        else:
+            await sql.add_user(user_id, False, False)
 
 
 async def _send_partner_dashboard(callback: CallbackQuery) -> None:
@@ -670,7 +695,7 @@ async def _send_partner_dashboard(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == 'partner_earn')
 async def partner_program(callback: CallbackQuery):
     await callback.answer()
-    await _ensure_user_exists(callback.from_user.id)
+    await _ensure_user_exists(callback.from_user.id, callback.from_user)
     await _send_partner_dashboard(callback)
 
 
@@ -762,7 +787,7 @@ async def activate_gift(message: Message, gift_id: str):
         await message.answer(lexicon['gift_no'])
         logger.warning(f'Ссылка на подарок протухла')
         if await sql.get_user(message.from_user.id) is None:
-            await sql.add_user(message.from_user.id, False)
+            await _add_user_with_profile(message.from_user, False)
             logger.success(
                 f'Юзер {message.from_user.id} - {message.from_user.username} зашел в бота в первый раз по подарочной ссылке')
         return False
@@ -783,7 +808,7 @@ async def activate_gift(message: Message, gift_id: str):
         ref_as_gift = ''
         if gift_giver_id and int(gift_giver_id) != int(user_id):
             ref_as_gift = str(int(gift_giver_id))
-        await sql.add_user(message.from_user.id, False, False, ref=ref_as_gift)
+        await _add_user_with_profile(message.from_user, False, False, ref=ref_as_gift)
 
     existing_user = await x3.get_user_by_username(user_id_str)
 
@@ -837,7 +862,7 @@ async def activate_gift(message: Message, gift_id: str):
     else:
         await message.answer("❌ Ошибка при активации подарка. Обратитесь в поддержку.")
         if await sql.get_user(message.from_user.id) is None:
-            await sql.add_user(message.from_user.id, False)
+            await _add_user_with_profile(message.from_user, False)
         return False
 
 
