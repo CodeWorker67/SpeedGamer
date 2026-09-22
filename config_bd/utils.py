@@ -1617,6 +1617,14 @@ class AsyncSQL:
                     Users.user_id.notin_(non_short_paid),
                 )
             )
+        if category == "trial_used_no_active_sub":
+            return wrap(
+                and_(
+                    Users.is_delete == False,
+                    Users.field_bool_3.is_(True),
+                    not_(self._broadcast_any_subscription_active(current_time)),
+                )
+            )
         return None
 
     async def count_users_for_broadcast(self, category: str, exclude_today: bool) -> int:
@@ -1808,6 +1816,7 @@ class AsyncSQL:
             "subscribed_all",
             "never_bought_forever",
             "no_sub_or_expired_over_10d",
+            "trial_used_no_active_sub",
             "all_users",
         ]
 

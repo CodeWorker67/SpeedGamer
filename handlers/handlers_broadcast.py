@@ -74,6 +74,7 @@ CATEGORY_LABELS = {
     "never_bought_forever": "без тарифа Навсегда",
     "no_sub_or_expired_over_10d": "Подписки нет или подписки просрочены более 10 дней",
     "paid_at_most_once": "нет оплат или одна оплата на 7/30 дней",
+    "trial_used_no_active_sub": "брали триал, нет активной подписки",
     "all_users": "все пользователи",
 }
 
