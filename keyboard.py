@@ -799,6 +799,39 @@ def keyboard_partner_withdraw(support_url: str):
     ])
 
 
+def keyboard_contest_win_reveal() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            emoji_button(
+                text="🎁 Узнать свой приз",
+                callback_data="cwin_reveal",
+            )
+        ],
+    ])
+
+
+def keyboard_contest_win_take() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            emoji_button(
+                text="🛍 Забрать скидку",
+                callback_data="cwin_take",
+            )
+        ],
+    ])
+
+
+def keyboard_contest_win_urgency_buy() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            emoji_button(
+                text="🕒 Успеть оформить со скидкой",
+                callback_data="cwin_buy",
+            )
+        ],
+    ])
+
+
 def keyboard_discount_push_reveal() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [

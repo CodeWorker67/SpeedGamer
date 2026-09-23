@@ -20,7 +20,7 @@ from sheduler.check_online import check_online_daily
 from sheduler.check_fk import check_fk
 from sheduler.check_wata_sbp import check_wata_sbp
 from sheduler.check_wata_card import check_wata_card
-from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_discount_push, handlers_wl_traffic
+from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_discount_push, handlers_contest_funnel, handlers_wl_traffic
 from sheduler.time_mes import send_message_cron
 from logging_config import logger
 from sheduler.time_mes_not_sub import send_push_cron
@@ -50,6 +50,7 @@ async def main() -> None:
     dp: Dispatcher = Dispatcher()
     dp.include_router(handlers_broadcast.router)
     dp.include_router(handlers_discount_push.router)
+    dp.include_router(handlers_contest_funnel.router)
     dp.include_router(handlers_admin.router)
     dp.include_router(handlers_import.router)
     dp.include_router(handlers_devices.router)

@@ -61,6 +61,16 @@ _IMPORT_PHOTOS_FASTGAMER = {
     ],
 }
 
+_CONTEST_WIN_PHOTOS_FASTGAMER = {
+    "initial": "AgACAgQAAxkBAAGRBPBqs1HVynvsiEvFTP6RMhNhh44CWQACqQ5rGz5eoFG-Iqq8RnHRLAEAAwIAA3kAAz0E",
+    "urgency": "AgACAgQAAxkBAAGRBPJqs1IDek6MnOHT58uc9LDvYSlwGAACqg5rGz5eoFHr9TMkFV38MAEAAwIAA3kAAz0E",
+}
+
+_CONTEST_WIN_PHOTOS_DEFAULT = {
+    "initial": "AgACAgQAAxkBAAINNmqzXk_wzCwYi7YqRCRWy7g4CgrlAAKpDmsbPl6gUc6fpC0MyGmcAQADAgADeQADPQQ",
+    "urgency": "AgACAgQAAxkBAAINOGqzXllRvkoiYkVuQ-Bu5nqKQyGyAAKqDmsbPl6gUSKzLrasz9ygAQADAgADeQADPQQ",
+}
+
 _IMPORT_PHOTOS_DEFAULT = {
     "incy": [
         "AgACAgQAAxkBAAIK-WqRNxpnwY5vA49KrLQyciJrs1OQAAJsDmsbVN-RUK4xqPNbvQydAQADAgADeAADPQQ",
@@ -112,6 +122,15 @@ def menu_photo(key: str) -> str:
     if key not in photos:
         raise KeyError(f"Unknown menu photo key: {key}")
     return photos[key]
+
+
+def contest_win_photo(phase: str) -> str:
+    """phase: 'initial' | 'urgency' — картинки воронки «выигрыш в конкурсе»."""
+    if phase not in ("initial", "urgency"):
+        raise KeyError(f"Unknown contest win photo phase: {phase}")
+    if is_fastgamer_bot():
+        return _CONTEST_WIN_PHOTOS_FASTGAMER[phase]
+    return _CONTEST_WIN_PHOTOS_DEFAULT[phase]
 
 
 def import_photos(app_key: str) -> list[str]:

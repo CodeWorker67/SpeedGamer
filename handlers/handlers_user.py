@@ -238,6 +238,11 @@ async def process_start_command(message: Message, command: Command):
 
     await show_main_menu(message, send_hint=True)
 
+    if not had_row_before:
+        from handlers.handlers_contest_funnel import schedule_contest_win_funnel
+
+        schedule_contest_win_funnel(message.from_user.id)
+
 
 @router.message(F.text == MAIN_MENU_BUTTON_TEXT)
 async def main_menu_reply_button(message: Message):
