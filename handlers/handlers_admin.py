@@ -44,16 +44,6 @@ _DEL_OLD_NO_CB = "adm_del_old_no"
 _DELETE_PENDING: dict[tuple[int, str], dict] = {}
 _DELETE_RUNNING: set[tuple[int, str]] = set()
 
-_DEL_OLD_CRITERIA_TEXT = (
-    "• не брал ключ (in_panel = False)\n"
-    "• не подключался (is_connect = False)\n"
-    "• не платил (reserve_field = False)\n"
-    "• регистрация раньше чем 30 дней назад\n"
-    "• нет успешных оплат в БД\n"
-    "• нет активной подписки"
-)
-
-
 def _delete_confirm_kb(yes_cb: str, no_cb: str) -> InlineKeyboardMarkup:
     return create_kb(
         2,
@@ -825,6 +815,32 @@ def _delete_pending_key(admin_id: int, kind: str) -> tuple[int, str]:
     return admin_id, kind
 
 
+async def _bulk_delete_users_and_report(
+    admin_chat_id: int,
+    user_ids: list[int],
+    *,
+    operation_label: str,
+    extra_lines: str = "",
+) -> None:
+    total = len(user_ids)
+    if not total:
+        await bot.send_message(admin_chat_id, f"Список пуст ({operation_label}).")
+        return
+
+    deleted = await sql.delete_users_from_db_by_ids(user_ids)
+    failed = max(0, total - deleted)
+    report = (
+        f"✅ {operation_label}\n\n"
+        f"• К удалению: {total}\n"
+        f"• Удалено из БД бота: {deleted}\n"
+        f"• Не удалено: {failed}\n"
+        f"⚠️ Удаление только из БД бота; панель X3 не затронута."
+    )
+    if extra_lines:
+        report = f"{report}\n{extra_lines}"
+    await bot.send_message(admin_chat_id, report)
+
+
 async def _run_bulk_delete(
     callback: CallbackQuery,
     kind: str,
@@ -948,28 +964,25 @@ async def delete_old_command(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
 
-    cutoff = sql.delete_old_registration_cutoff()
+    await message.answer("⏳ Формирую выборку /delete_old…")
     try:
-        user_ids = await sql.select_user_ids_for_delete_old()
+        n = await sql.count_user_ids_for_delete_old()
     except Exception as e:
         logger.error(f"Ошибка выборки /delete_old: {e}")
         await message.answer(f"❌ Ошибка при поиске пользователей: {e}")
         return
 
-    n = len(user_ids)
     if n == 0:
         await message.answer(
-            "Нет пользователей по критериям /delete_old.\n\n"
-            f"{_DEL_OLD_CRITERIA_TEXT}\n"
-            f"• порог регистрации: {cutoff.strftime('%Y-%m-%d %H:%M:%S')}"
+            "Нет пользователей под критерии /delete_old "
+            "(in_panel=False, is_connect=False, reserve_field=False, "
+            "регистрация > месяца назад, без оплат и без активной подписки)."
         )
         return
 
     await message.answer(
-        f"Найдено неактивных пользователей: <b>{n}</b>\n\n"
-        f"{_DEL_OLD_CRITERIA_TEXT}\n"
-        f"• порог регистрации: {cutoff.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"Удалить их из БД бота?",
+        f"К удалению (неактивные старше месяца): <b>{n}</b> чел.\n\n"
+        f"Удалить всех из БД бота?",
         parse_mode="HTML",
         reply_markup=_delete_confirm_kb(_DEL_OLD_YES_CB, _DEL_OLD_NO_CB),
     )
@@ -989,39 +1002,38 @@ async def delete_old_confirm(callback: CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Нет доступа.", show_alert=True)
         return
-    cutoff = sql.delete_old_registration_cutoff()
+
+    await callback.answer()
     try:
         user_ids = await sql.select_user_ids_for_delete_old()
     except Exception as e:
         logger.error(f"Ошибка выборки /delete_old (confirm): {e}")
-        await callback.answer()
         await callback.message.edit_text(
             f"❌ Ошибка при поиске пользователей: {e}",
             reply_markup=None,
         )
         return
 
-    n = len(user_ids)
     if not user_ids:
-        await callback.answer()
         await callback.message.edit_text(
             "Список пуст. Повторите /delete_old.",
             reply_markup=None,
         )
         return
 
-    key = _delete_pending_key(callback.from_user.id, "old")
-    _DELETE_PENDING[key] = {"user_ids": user_ids, "cutoff": cutoff}
-    cutoff_s = cutoff.strftime("%Y-%m-%d %H:%M:%S")
-    await _run_bulk_delete(
-        callback,
-        "old",
-        progress_text=f"⏳ Удаляю {n} неактивных пользователей…",
-        report_title="✅ Удаление неактивных завершено",
-        extra_report=(
-            f"{_DEL_OLD_CRITERIA_TEXT}\n"
-            f"• порог регистрации: {cutoff_s}\n\n"
-        ),
+    await callback.message.edit_text(
+        f"⏳ /delete_old: удаление {len(user_ids)} пользователей…",
+        reply_markup=None,
+    )
+    await _bulk_delete_users_and_report(
+        callback.message.chat.id,
+        user_ids,
+        operation_label="Удаление /delete_old",
+    )
+    logger.info(
+        "Админ %s: delete_old count=%s",
+        callback.from_user.id,
+        len(user_ids),
     )
 
 

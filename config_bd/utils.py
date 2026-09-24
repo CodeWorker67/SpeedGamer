@@ -2,7 +2,7 @@ import asyncio
 import uuid
 import time
 
-from sqlalchemy import select, update, func, or_, and_, literal, union_all, case, delete, cast, Date, not_, exists
+from sqlalchemy import select, update, func, or_, and_, literal, union_all, case, delete, cast, Date, not_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List, Tuple, Dict, Any, Set
@@ -1834,77 +1834,69 @@ class AsyncSQL:
             logger.info(f"✅ Удалено пользователей: 1 (User_id: {user_id})")
             return True
 
-    @staticmethod
-    def delete_old_registration_cutoff() -> datetime:
-        """Порог регистрации для /delete_old: 30 суток назад от текущего момента."""
-        return datetime.now() - timedelta(days=30)
-
-    @staticmethod
-    def _delete_old_inactive_flags():
-        """Не брал ключ / не подключался / не платил (NULL трактуется как False)."""
+    def _successful_payment_payers_subquery(self):
+        """user_id с хотя бы одной успешной оплатой (union, как в 21OpenVPN)."""
         return (
-            func.coalesce(Users.in_panel, False).is_(False),
-            func.coalesce(Users.is_connect, False).is_(False),
-            func.coalesce(Users.reserve_field, False).is_(False),
+            select(Payments.user_id).where(
+                Payments.status == "confirmed", Payments.user_id.isnot(None)
+            )
+            .union(
+                select(PaymentsStars.user_id).where(
+                    PaymentsStars.status == "confirmed",
+                    PaymentsStars.user_id.isnot(None),
+                ),
+                select(PaymentsCryptobot.user_id).where(
+                    PaymentsCryptobot.status == "paid",
+                    PaymentsCryptobot.user_id.isnot(None),
+                ),
+                select(PaymentsCards.user_id).where(
+                    PaymentsCards.status == "confirmed",
+                    PaymentsCards.user_id.isnot(None),
+                ),
+                select(PaymentsPlategaCrypto.user_id).where(
+                    PaymentsPlategaCrypto.status == "confirmed",
+                    PaymentsPlategaCrypto.user_id.isnot(None),
+                ),
+                select(PaymentsWataSBP.user_id).where(
+                    PaymentsWataSBP.status == "confirmed",
+                    PaymentsWataSBP.user_id.isnot(None),
+                ),
+                select(PaymentsWataCard.user_id).where(
+                    PaymentsWataCard.status == "confirmed",
+                    PaymentsWataCard.user_id.isnot(None),
+                ),
+                select(PaymentsFkSBP.user_id).where(
+                    PaymentsFkSBP.status == "confirmed",
+                    PaymentsFkSBP.user_id.isnot(None),
+                ),
+            )
+            .subquery()
         )
 
-    @staticmethod
-    def _user_without_successful_payment():
-        """
-        Нет успешных оплат (NOT EXISTS по всем платёжным таблицам).
-        Надёжнее, чем NOT IN по union: не ломается на NULL в user_id платежей.
-        """
-        paid_exists = or_(
-            exists(
-                select(1).where(
-                    Payments.user_id == Users.user_id,
-                    Payments.status == "confirmed",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsStars.user_id == Users.user_id,
-                    PaymentsStars.status == "confirmed",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsCryptobot.user_id == Users.user_id,
-                    PaymentsCryptobot.status == "paid",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsCards.user_id == Users.user_id,
-                    PaymentsCards.status == "confirmed",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsPlategaCrypto.user_id == Users.user_id,
-                    PaymentsPlategaCrypto.status == "confirmed",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsWataSBP.user_id == Users.user_id,
-                    PaymentsWataSBP.status == "confirmed",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsWataCard.user_id == Users.user_id,
-                    PaymentsWataCard.status == "confirmed",
-                )
-            ),
-            exists(
-                select(1).where(
-                    PaymentsFkSBP.user_id == Users.user_id,
-                    PaymentsFkSBP.status == "confirmed",
-                )
-            ),
+    def _any_subscription_active_today_msk(self):
+        """Активная подписка на текущий календарный день (МСК), как в 21OpenVPN."""
+        return self._broadcast_any_subscription_active(datetime.now())
+
+    def _delete_old_where(self, cutoff: datetime):
+        paid_subq = self._successful_payment_payers_subquery()
+        return (
+            Users.in_panel == False,
+            Users.is_connect == False,
+            Users.reserve_field == False,
+            Users.create_user < cutoff,
+            Users.user_id.notin_(select(paid_subq.c.user_id)),
+            not_(self._any_subscription_active_today_msk()),
         )
-        return not_(paid_exists)
+
+    async def count_user_ids_for_delete_old(self) -> int:
+        """Быстрый COUNT для /delete_old без загрузки всех user_id."""
+        cutoff = datetime.now() - timedelta(days=30)
+        async with self.session_factory() as session:
+            stmt = select(func.count()).select_from(Users).where(
+                *self._delete_old_where(cutoff)
+            )
+            result = await session.execute(stmt)
+            return int(result.scalar() or 0)
 
     async def select_user_ids_by_stamp(self, stamp: str) -> List[int]:
         """Все user_id с указанной меткой stamp."""
@@ -1917,33 +1909,34 @@ class AsyncSQL:
         """
         Кандидаты на /delete_old (как в 21OpenVPN):
         не брал ключ, не подключался, не платил, регистрация > 30 дней назад,
-        без успешных оплат, без активной подписки на текущий день (МСК).
+        без успешных оплат, без активной подписки.
         """
-        cutoff = self.delete_old_registration_cutoff()
+        cutoff = datetime.now() - timedelta(days=30)
         async with self.session_factory() as session:
-            stmt = select(Users.user_id).where(
-                *self._delete_old_inactive_flags(),
-                Users.create_user < cutoff,
-                self._user_without_successful_payment(),
-                not_(self._broadcast_any_subscription_active(datetime.now())),
-            )
+            stmt = select(Users.user_id).where(*self._delete_old_where(cutoff))
             result = await session.execute(stmt)
             return [int(row[0]) for row in result.all()]
 
-    async def delete_users_from_db(self, user_ids: List[int]) -> int:
-        """Массово удаляет пользователей из таблицы users. Возвращает число удалённых строк."""
+    async def delete_users_from_db_by_ids(self, user_ids: List[int]) -> int:
+        """Удаляет записи users пакетами; возвращает число удалённых строк."""
         if not user_ids:
             return 0
+        uniq = list({int(u) for u in user_ids})
         deleted = 0
         async with self.session_factory() as session:
-            for i in range(0, len(user_ids), _STAT_IN_CHUNK):
-                chunk = user_ids[i : i + _STAT_IN_CHUNK]
+            for i in range(0, len(uniq), _STAT_IN_CHUNK):
+                chunk = uniq[i : i + _STAT_IN_CHUNK]
                 stmt = delete(Users).where(Users.user_id.in_(chunk))
                 result = await session.execute(stmt)
                 deleted += int(result.rowcount or 0)
             await session.commit()
-        logger.info(f"✅ Массово удалено пользователей из БД: {deleted}")
+        logger.info(
+            "bulk delete users: requested=%s deleted=%s", len(uniq), deleted
+        )
         return deleted
+
+    async def delete_users_from_db(self, user_ids: List[int]) -> int:
+        return await self.delete_users_from_db_by_ids(user_ids)
 
     async def reset_all_delete_flag(self) -> int:
         """Устанавливает Is_delete = False для всех записей в таблице users."""
