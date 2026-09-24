@@ -52,6 +52,10 @@ PUBLIC_SITE_URL: str = (os.environ.get("PUBLIC_SITE_URL") or "").strip().rstrip(
 SITE_URL: str = (os.environ.get("SITE_URL") or "").strip().rstrip("/")
 JWT_SECRET: Optional[str] = (os.environ.get("JWT_SECRET") or "").strip() or None
 GOOGLE_CLIENT_ID: Optional[str] = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip() or None
+# Антиспам по апдейтам Telegram: не более N событий от одного user_id за window секунд (скользящее окно).
+THROTTLE_MAX_UPDATES: int = int(os.environ.get("THROTTLE_MAX_UPDATES", "25"))
+THROTTLE_WINDOW_SEC: float = float(os.environ.get("THROTTLE_WINDOW_SEC", "8"))
+
 PAYMENT_MAX_PENDING_PER_USER: int = int((os.environ.get("PAYMENT_MAX_PENDING_PER_USER") or "8").strip())
 SMTP_HOST: Optional[str] = (os.environ.get("SMTP_HOST") or "").strip() or None
 SMTP_PORT: int = int((os.environ.get("SMTP_PORT") or "587").strip())
