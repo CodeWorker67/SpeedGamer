@@ -1,3 +1,4 @@
+import html
 import random
 import os
 import tempfile
@@ -35,6 +36,30 @@ router = Router()
 
 PRO_HWID_DEVICE_LIMIT = 5
 _EXCEL_COL_WIDTH_MAX = 255
+
+_DEL_STAMP_YES_CB = "adm_del_stamp_yes"
+_DEL_STAMP_NO_CB = "adm_del_stamp_no"
+_DEL_OLD_YES_CB = "adm_del_old_yes"
+_DEL_OLD_NO_CB = "adm_del_old_no"
+_DELETE_PENDING: dict[tuple[int, str], dict] = {}
+_DELETE_RUNNING: set[tuple[int, str]] = set()
+
+_DEL_OLD_CRITERIA_TEXT = (
+    "• не брал ключ (in_panel = False)\n"
+    "• не подключался (is_connect = False)\n"
+    "• не платил (reserve_field = False)\n"
+    "• регистрация раньше чем месяц назад\n"
+    "• нет успешных оплат в БД\n"
+    "• нет активной подписки"
+)
+
+
+def _delete_confirm_kb(yes_cb: str, no_cb: str) -> InlineKeyboardMarkup:
+    return create_kb(
+        2,
+        styles={yes_cb: STYLE_SUCCESS, no_cb: STYLE_DANGER},
+        **{yes_cb: "Да", no_cb: "Нет"},
+    )
 
 _MSK = timezone(timedelta(hours=3))
 
@@ -794,6 +819,193 @@ async def delete_user_command(message: Message):
     except Exception as e:
         logger.error(f"Ошибка в команде /delete: {e}")
         await message.answer(f"❌ Произошла ошибка при выполнении команды: {str(e)}")
+
+
+def _delete_pending_key(admin_id: int, kind: str) -> tuple[int, str]:
+    return admin_id, kind
+
+
+async def _run_bulk_delete(
+    callback: CallbackQuery,
+    kind: str,
+    *,
+    progress_text: str,
+    report_title: str,
+    extra_report: str = "",
+) -> None:
+    admin_id = callback.from_user.id
+    key = _delete_pending_key(admin_id, kind)
+    if key in _DELETE_RUNNING:
+        await callback.answer("Удаление уже выполняется.", show_alert=True)
+        return
+
+    pending = _DELETE_PENDING.pop(key, None)
+    if not pending:
+        await callback.answer()
+        await callback.message.edit_text(
+            "Список пуст. Повторите команду.",
+            reply_markup=None,
+        )
+        return
+
+    user_ids = pending.get("user_ids") or []
+    await callback.answer()
+    await callback.message.edit_text(progress_text, reply_markup=None)
+
+    _DELETE_RUNNING.add(key)
+    try:
+        deleted = await sql.delete_users_from_db(user_ids)
+    except Exception as e:
+        logger.error(f"Ошибка массового удаления ({kind}): {e}")
+        await callback.message.answer(f"❌ Ошибка при удалении: {e}")
+        return
+    finally:
+        _DELETE_RUNNING.discard(key)
+
+    found = len(user_ids)
+    failed = max(0, found - deleted)
+    logger.info(
+        f"Администратор {admin_id} удалил {deleted}/{found} пользователей ({kind})"
+    )
+    report = (
+        f"{report_title}\n\n"
+        f"{extra_report}"
+        f"👥 В выборке: {found}\n"
+        f"🗑 Удалено из БД бота: {deleted}\n"
+        f"❌ Не найдено / ошибок: {failed}\n\n"
+        f"⚠️ Пользователи удалены только из базы данных бота.\n"
+        f"   Подписки в панели управления (X3) не затронуты."
+    )
+    await callback.message.answer(report)
+
+
+@router.message(Command(commands=["delete_stamp"]))
+async def delete_stamp_command(message: Message):
+    """Удаление всех пользователей с указанной меткой stamp (с подтверждением)."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip():
+        await message.answer("❌ Использование: /delete_stamp <метка>\nНапример: /delete_stamp YuraTT")
+        return
+
+    stamp = args[1].strip()
+    stamp_html = html.escape(stamp)
+    try:
+        user_ids = await sql.select_user_ids_by_stamp(stamp)
+    except Exception as e:
+        logger.error(f"Ошибка выборки /delete_stamp: {e}")
+        await message.answer(f"❌ Ошибка при поиске пользователей: {e}")
+        return
+
+    n = len(user_ids)
+    if n == 0:
+        await message.answer(f"Пользователи с меткой «{stamp_html}» не найдены.")
+        return
+
+    key = _delete_pending_key(message.from_user.id, "stamp")
+    _DELETE_PENDING[key] = {"user_ids": user_ids, "stamp": stamp}
+    await message.answer(
+        f"Найдено пользователей с меткой «{stamp_html}»: <b>{n}</b>\n\n"
+        f"Удалить их из БД бота?",
+        parse_mode="HTML",
+        reply_markup=_delete_confirm_kb(_DEL_STAMP_YES_CB, _DEL_STAMP_NO_CB),
+    )
+
+
+@router.callback_query(F.data == _DEL_STAMP_NO_CB)
+async def delete_stamp_cancel(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    _DELETE_PENDING.pop(_delete_pending_key(callback.from_user.id, "stamp"), None)
+    await callback.answer()
+    await callback.message.edit_text("Удаление по метке отменено.", reply_markup=None)
+
+
+@router.callback_query(F.data == _DEL_STAMP_YES_CB)
+async def delete_stamp_confirm(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    pending = _DELETE_PENDING.get(_delete_pending_key(callback.from_user.id, "stamp"))
+    stamp = (pending or {}).get("stamp", "—")
+    stamp_html = html.escape(str(stamp))
+    n = len((pending or {}).get("user_ids") or [])
+    await _run_bulk_delete(
+        callback,
+        "stamp",
+        progress_text=f"⏳ Удаляю {n} пользователей с меткой «{stamp_html}»…",
+        report_title="✅ Удаление по метке завершено",
+        extra_report=f"🏷 Метка: {stamp_html}\n",
+    )
+
+
+@router.message(Command(commands=["delete_old"]))
+async def delete_old_command(message: Message):
+    """Удаление старых неактивных пользователей без оплат и подписок (с подтверждением)."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    threshold = sql.month_ago_datetime()
+    try:
+        user_ids = await sql.select_old_inactive_user_ids(threshold)
+    except Exception as e:
+        logger.error(f"Ошибка выборки /delete_old: {e}")
+        await message.answer(f"❌ Ошибка при поиске пользователей: {e}")
+        return
+
+    n = len(user_ids)
+    if n == 0:
+        await message.answer(
+            "Нет пользователей по критериям /delete_old.\n\n"
+            f"{_DEL_OLD_CRITERIA_TEXT}\n"
+            f"• порог регистрации: {threshold.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        return
+
+    key = _delete_pending_key(message.from_user.id, "old")
+    _DELETE_PENDING[key] = {"user_ids": user_ids, "threshold": threshold}
+    await message.answer(
+        f"Найдено неактивных пользователей: <b>{n}</b>\n\n"
+        f"{_DEL_OLD_CRITERIA_TEXT}\n"
+        f"• порог регистрации: {threshold.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"Удалить их из БД бота?",
+        parse_mode="HTML",
+        reply_markup=_delete_confirm_kb(_DEL_OLD_YES_CB, _DEL_OLD_NO_CB),
+    )
+
+
+@router.callback_query(F.data == _DEL_OLD_NO_CB)
+async def delete_old_cancel(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    _DELETE_PENDING.pop(_delete_pending_key(callback.from_user.id, "old"), None)
+    await callback.answer()
+    await callback.message.edit_text("Удаление неактивных отменено.", reply_markup=None)
+
+
+@router.callback_query(F.data == _DEL_OLD_YES_CB)
+async def delete_old_confirm(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    pending = _DELETE_PENDING.get(_delete_pending_key(callback.from_user.id, "old"))
+    n = len((pending or {}).get("user_ids") or [])
+    threshold = (pending or {}).get("threshold")
+    threshold_s = threshold.strftime("%Y-%m-%d %H:%M:%S") if threshold else "—"
+    await _run_bulk_delete(
+        callback,
+        "old",
+        progress_text=f"⏳ Удаляю {n} неактивных пользователей…",
+        report_title="✅ Удаление неактивных завершено",
+        extra_report=(
+            f"{_DEL_OLD_CRITERIA_TEXT}\n"
+            f"• порог регистрации: {threshold_s}\n\n"
+        ),
+    )
 
 
 @router.message(Command("online"))

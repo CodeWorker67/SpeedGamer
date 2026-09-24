@@ -1,4 +1,5 @@
 import asyncio
+import calendar
 import uuid
 import time
 
@@ -1833,6 +1834,82 @@ class AsyncSQL:
             await session.commit()
             logger.info(f"✅ Удалено пользователей: 1 (User_id: {user_id})")
             return True
+
+    @staticmethod
+    def month_ago_datetime(now: Optional[datetime] = None) -> datetime:
+        """Текущий момент минус один календарный месяц."""
+        now = now or datetime.now()
+        year = now.year
+        month = now.month - 1
+        if month == 0:
+            month = 12
+            year -= 1
+        day = min(now.day, calendar.monthrange(year, month)[1])
+        return now.replace(year=year, month=month, day=day)
+
+    def _successful_payers_subquery(self):
+        """user_id с хотя бы одной успешной оплатой в любой платёжной таблице."""
+        first, *rest = _MERGE_PAYMENT_MODELS
+        stmt = select(first.user_id).where(first.status.in_(_BILLING_OK_STATUSES))
+        for model in rest:
+            stmt = stmt.union(
+                select(model.user_id).where(model.status.in_(_BILLING_OK_STATUSES))
+            )
+        return stmt.subquery()
+
+    @staticmethod
+    def _any_subscription_active(now: datetime):
+        return or_(
+            Users.subscription_end_date > now,
+            Users.subscription_3_end_date > now,
+            Users.subscription_10_end_date > now,
+            Users.white_subscription_end_date > now,
+        )
+
+    async def select_user_ids_by_stamp(self, stamp: str) -> List[int]:
+        """Все user_id с указанной меткой stamp."""
+        async with self.session_factory() as session:
+            stmt = select(Users.user_id).where(Users.stamp == stamp)
+            result = await session.execute(stmt)
+            return [int(row[0]) for row in result.all()]
+
+    async def select_old_inactive_user_ids(
+        self, created_before: Optional[datetime] = None
+    ) -> List[int]:
+        """
+        Пользователи без ключа, без подключения, без оплаты, регистрация старше месяца,
+        без успешных платежей и без активной подписки.
+        """
+        now = datetime.now()
+        threshold = created_before or self.month_ago_datetime(now)
+        paid_subq = self._successful_payers_subquery()
+        async with self.session_factory() as session:
+            stmt = select(Users.user_id).where(
+                Users.in_panel == False,
+                Users.is_connect == False,
+                Users.reserve_field == False,
+                Users.create_user.isnot(None),
+                Users.create_user < threshold,
+                Users.user_id.notin_(paid_subq),
+                not_(self._any_subscription_active(now)),
+            )
+            result = await session.execute(stmt)
+            return [int(row[0]) for row in result.all()]
+
+    async def delete_users_from_db(self, user_ids: List[int]) -> int:
+        """Массово удаляет пользователей из таблицы users. Возвращает число удалённых строк."""
+        if not user_ids:
+            return 0
+        deleted = 0
+        async with self.session_factory() as session:
+            for i in range(0, len(user_ids), _STAT_IN_CHUNK):
+                chunk = user_ids[i : i + _STAT_IN_CHUNK]
+                stmt = delete(Users).where(Users.user_id.in_(chunk))
+                result = await session.execute(stmt)
+                deleted += int(result.rowcount or 0)
+            await session.commit()
+        logger.info(f"✅ Массово удалено пользователей из БД: {deleted}")
+        return deleted
 
     async def reset_all_delete_flag(self) -> int:
         """Устанавливает Is_delete = False для всех записей в таблице users."""
