@@ -1,9 +1,8 @@
 import asyncio
-import calendar
 import uuid
 import time
 
-from sqlalchemy import select, update, func, or_, and_, literal, union_all, case, delete, cast, Date, not_
+from sqlalchemy import select, update, func, or_, and_, literal, union_all, case, delete, cast, Date, not_, exists
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List, Tuple, Dict, Any, Set
@@ -1836,43 +1835,76 @@ class AsyncSQL:
             return True
 
     @staticmethod
-    def month_ago_datetime(now: Optional[datetime] = None) -> datetime:
-        """Текущий момент минус один календарный месяц."""
-        now = now or datetime.now()
-        year = now.year
-        month = now.month - 1
-        if month == 0:
-            month = 12
-            year -= 1
-        day = min(now.day, calendar.monthrange(year, month)[1])
-        return now.replace(year=year, month=month, day=day)
+    def delete_old_registration_cutoff() -> datetime:
+        """Порог регистрации для /delete_old: 30 суток назад от текущего момента."""
+        return datetime.now() - timedelta(days=30)
 
-    def _successful_payers_subquery(self):
-        """user_id с хотя бы одной успешной оплатой в любой платёжной таблице."""
+    @staticmethod
+    def _delete_old_inactive_flags():
+        """Не брал ключ / не подключался / не платил (NULL трактуется как False)."""
         return (
-            select(Payments.user_id).where(Payments.status == "confirmed")
-            .union(
-                select(PaymentsStars.user_id).where(PaymentsStars.status == "confirmed"),
-                select(PaymentsCryptobot.user_id).where(PaymentsCryptobot.status == "paid"),
-                select(PaymentsCards.user_id).where(PaymentsCards.status == "confirmed"),
-                select(PaymentsPlategaCrypto.user_id).where(
-                    PaymentsPlategaCrypto.status == "confirmed"
-                ),
-                select(PaymentsWataSBP.user_id).where(PaymentsWataSBP.status == "confirmed"),
-                select(PaymentsWataCard.user_id).where(PaymentsWataCard.status == "confirmed"),
-                select(PaymentsFkSBP.user_id).where(PaymentsFkSBP.status == "confirmed"),
-            )
-            .subquery()
+            func.coalesce(Users.in_panel, False).is_(False),
+            func.coalesce(Users.is_connect, False).is_(False),
+            func.coalesce(Users.reserve_field, False).is_(False),
         )
 
     @staticmethod
-    def _any_subscription_active(now: datetime):
-        return or_(
-            Users.subscription_end_date > now,
-            Users.subscription_3_end_date > now,
-            Users.subscription_10_end_date > now,
-            Users.white_subscription_end_date > now,
+    def _user_without_successful_payment():
+        """
+        Нет успешных оплат (NOT EXISTS по всем платёжным таблицам).
+        Надёжнее, чем NOT IN по union: не ломается на NULL в user_id платежей.
+        """
+        paid_exists = or_(
+            exists(
+                select(1).where(
+                    Payments.user_id == Users.user_id,
+                    Payments.status == "confirmed",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsStars.user_id == Users.user_id,
+                    PaymentsStars.status == "confirmed",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsCryptobot.user_id == Users.user_id,
+                    PaymentsCryptobot.status == "paid",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsCards.user_id == Users.user_id,
+                    PaymentsCards.status == "confirmed",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsPlategaCrypto.user_id == Users.user_id,
+                    PaymentsPlategaCrypto.status == "confirmed",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsWataSBP.user_id == Users.user_id,
+                    PaymentsWataSBP.status == "confirmed",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsWataCard.user_id == Users.user_id,
+                    PaymentsWataCard.status == "confirmed",
+                )
+            ),
+            exists(
+                select(1).where(
+                    PaymentsFkSBP.user_id == Users.user_id,
+                    PaymentsFkSBP.status == "confirmed",
+                )
+            ),
         )
+        return not_(paid_exists)
 
     async def select_user_ids_by_stamp(self, stamp: str) -> List[int]:
         """Все user_id с указанной меткой stamp."""
@@ -1881,25 +1913,19 @@ class AsyncSQL:
             result = await session.execute(stmt)
             return [int(row[0]) for row in result.all()]
 
-    async def select_old_inactive_user_ids(
-        self, created_before: Optional[datetime] = None
-    ) -> List[int]:
+    async def select_user_ids_for_delete_old(self) -> List[int]:
         """
-        Пользователи без ключа, без подключения, без оплаты, регистрация старше месяца,
-        без успешных платежей и без активной подписки.
+        Кандидаты на /delete_old (как в 21OpenVPN):
+        не брал ключ, не подключался, не платил, регистрация > 30 дней назад,
+        без успешных оплат, без активной подписки на текущий день (МСК).
         """
-        now = datetime.now()
-        threshold = created_before or self.month_ago_datetime(now)
-        paid_subq = self._successful_payers_subquery()
+        cutoff = self.delete_old_registration_cutoff()
         async with self.session_factory() as session:
             stmt = select(Users.user_id).where(
-                Users.in_panel == False,
-                Users.is_connect == False,
-                Users.reserve_field == False,
-                Users.create_user.isnot(None),
-                Users.create_user < threshold,
-                Users.user_id.notin_(paid_subq),
-                not_(self._any_subscription_active(now)),
+                *self._delete_old_inactive_flags(),
+                Users.create_user < cutoff,
+                self._user_without_successful_payment(),
+                not_(self._broadcast_any_subscription_active(datetime.now())),
             )
             result = await session.execute(stmt)
             return [int(row[0]) for row in result.all()]

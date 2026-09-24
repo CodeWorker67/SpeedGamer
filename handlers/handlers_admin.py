@@ -48,7 +48,7 @@ _DEL_OLD_CRITERIA_TEXT = (
     "• не брал ключ (in_panel = False)\n"
     "• не подключался (is_connect = False)\n"
     "• не платил (reserve_field = False)\n"
-    "• регистрация раньше чем месяц назад\n"
+    "• регистрация раньше чем 30 дней назад\n"
     "• нет успешных оплат в БД\n"
     "• нет активной подписки"
 )
@@ -948,9 +948,9 @@ async def delete_old_command(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
 
-    threshold = sql.month_ago_datetime()
+    cutoff = sql.delete_old_registration_cutoff()
     try:
-        user_ids = await sql.select_old_inactive_user_ids(threshold)
+        user_ids = await sql.select_user_ids_for_delete_old()
     except Exception as e:
         logger.error(f"Ошибка выборки /delete_old: {e}")
         await message.answer(f"❌ Ошибка при поиске пользователей: {e}")
@@ -961,16 +961,14 @@ async def delete_old_command(message: Message):
         await message.answer(
             "Нет пользователей по критериям /delete_old.\n\n"
             f"{_DEL_OLD_CRITERIA_TEXT}\n"
-            f"• порог регистрации: {threshold.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"• порог регистрации: {cutoff.strftime('%Y-%m-%d %H:%M:%S')}"
         )
         return
 
-    key = _delete_pending_key(message.from_user.id, "old")
-    _DELETE_PENDING[key] = {"user_ids": user_ids, "threshold": threshold}
     await message.answer(
         f"Найдено неактивных пользователей: <b>{n}</b>\n\n"
         f"{_DEL_OLD_CRITERIA_TEXT}\n"
-        f"• порог регистрации: {threshold.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"• порог регистрации: {cutoff.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         f"Удалить их из БД бота?",
         parse_mode="HTML",
         reply_markup=_delete_confirm_kb(_DEL_OLD_YES_CB, _DEL_OLD_NO_CB),
@@ -982,7 +980,6 @@ async def delete_old_cancel(callback: CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Нет доступа.", show_alert=True)
         return
-    _DELETE_PENDING.pop(_delete_pending_key(callback.from_user.id, "old"), None)
     await callback.answer()
     await callback.message.edit_text("Удаление неактивных отменено.", reply_markup=None)
 
@@ -992,10 +989,30 @@ async def delete_old_confirm(callback: CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Нет доступа.", show_alert=True)
         return
-    pending = _DELETE_PENDING.get(_delete_pending_key(callback.from_user.id, "old"))
-    n = len((pending or {}).get("user_ids") or [])
-    threshold = (pending or {}).get("threshold")
-    threshold_s = threshold.strftime("%Y-%m-%d %H:%M:%S") if threshold else "—"
+    cutoff = sql.delete_old_registration_cutoff()
+    try:
+        user_ids = await sql.select_user_ids_for_delete_old()
+    except Exception as e:
+        logger.error(f"Ошибка выборки /delete_old (confirm): {e}")
+        await callback.answer()
+        await callback.message.edit_text(
+            f"❌ Ошибка при поиске пользователей: {e}",
+            reply_markup=None,
+        )
+        return
+
+    n = len(user_ids)
+    if not user_ids:
+        await callback.answer()
+        await callback.message.edit_text(
+            "Список пуст. Повторите /delete_old.",
+            reply_markup=None,
+        )
+        return
+
+    key = _delete_pending_key(callback.from_user.id, "old")
+    _DELETE_PENDING[key] = {"user_ids": user_ids, "cutoff": cutoff}
+    cutoff_s = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     await _run_bulk_delete(
         callback,
         "old",
@@ -1003,7 +1020,7 @@ async def delete_old_confirm(callback: CallbackQuery):
         report_title="✅ Удаление неактивных завершено",
         extra_report=(
             f"{_DEL_OLD_CRITERIA_TEXT}\n"
-            f"• порог регистрации: {threshold_s}\n\n"
+            f"• порог регистрации: {cutoff_s}\n\n"
         ),
     )
 
