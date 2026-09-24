@@ -1849,13 +1849,21 @@ class AsyncSQL:
 
     def _successful_payers_subquery(self):
         """user_id с хотя бы одной успешной оплатой в любой платёжной таблице."""
-        first, *rest = _MERGE_PAYMENT_MODELS
-        stmt = select(first.user_id).where(first.status.in_(_BILLING_OK_STATUSES))
-        for model in rest:
-            stmt = stmt.union(
-                select(model.user_id).where(model.status.in_(_BILLING_OK_STATUSES))
+        return (
+            select(Payments.user_id).where(Payments.status == "confirmed")
+            .union(
+                select(PaymentsStars.user_id).where(PaymentsStars.status == "confirmed"),
+                select(PaymentsCryptobot.user_id).where(PaymentsCryptobot.status == "paid"),
+                select(PaymentsCards.user_id).where(PaymentsCards.status == "confirmed"),
+                select(PaymentsPlategaCrypto.user_id).where(
+                    PaymentsPlategaCrypto.status == "confirmed"
+                ),
+                select(PaymentsWataSBP.user_id).where(PaymentsWataSBP.status == "confirmed"),
+                select(PaymentsWataCard.user_id).where(PaymentsWataCard.status == "confirmed"),
+                select(PaymentsFkSBP.user_id).where(PaymentsFkSBP.status == "confirmed"),
             )
-        return stmt.subquery()
+            .subquery()
+        )
 
     @staticmethod
     def _any_subscription_active(now: datetime):
