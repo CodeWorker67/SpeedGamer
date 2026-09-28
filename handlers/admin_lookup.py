@@ -46,7 +46,8 @@ _INFO_TEXT = (
     "/partner_remove — списание с partner_balance\n"
     "Пример: <code>/partner_remove 123456789 500</code>\n\n"
     "/find_transaction — поиск платежа по ID\n"
-    "Пример: <code>/find_transaction abc-123</code>\n"
+    "Пример: <code>/find_transaction abc-123</code>\n\n"
+    "/check_sub_all — user_id с двумя и более активными PRO (3/5/10)\n"
 )
 
 _DEVICE_TIER_TITLES = {

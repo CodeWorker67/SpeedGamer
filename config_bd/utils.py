@@ -2420,6 +2420,58 @@ class AsyncSQL:
             result = await session.execute(stmt)
             return int(result.scalar() or 0)
 
+    async def list_users_with_multiple_active_pro_subscriptions(
+        self,
+    ) -> List[Tuple[int, Tuple[int, ...]]]:
+        """
+        user_id и кортеж активных тарифов PRO (3 / 5 / 10 устройств).
+        Критерий «активна» — как в select_users_active_subscription (дата окончания >= начало дня WL).
+        """
+        from wl_traffic.constants import WL_TIMEZONE
+
+        today_start = (
+            datetime.now(WL_TIMEZONE)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .replace(tzinfo=None)
+        )
+
+        def _active(col):
+            return and_(col.isnot(None), col >= today_start)
+
+        pro_5 = _active(Users.subscription_end_date)
+        pro_3 = _active(Users.subscription_3_end_date)
+        pro_10 = _active(Users.subscription_10_end_date)
+        multiple_active = or_(
+            and_(pro_5, pro_3),
+            and_(pro_5, pro_10),
+            and_(pro_3, pro_10),
+        )
+        async with self.session_factory() as session:
+            stmt = select(
+                Users.user_id,
+                Users.subscription_end_date,
+                Users.subscription_3_end_date,
+                Users.subscription_10_end_date,
+            ).where(
+                Users.is_delete == False,
+                multiple_active,
+            )
+            rows = (await session.execute(stmt)).all()
+
+        out: List[Tuple[int, Tuple[int, ...]]] = []
+        for user_id, end_5, end_3, end_10 in rows:
+            slots: list[int] = []
+            if pro_subscription_end_active(end_3):
+                slots.append(3)
+            if pro_subscription_end_active(end_5):
+                slots.append(5)
+            if pro_subscription_end_active(end_10):
+                slots.append(10)
+            if len(slots) >= 2:
+                out.append((int(user_id), tuple(slots)))
+        out.sort(key=lambda x: x[0])
+        return out
+
     async def add_online_stats(
         self,
         users_panel: int,

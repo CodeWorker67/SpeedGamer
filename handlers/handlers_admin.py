@@ -1265,6 +1265,35 @@ async def shortuuid_export(message: Message):
     logger.info(report)
 
 
+@router.message(Command(commands=['check_sub_all']))
+async def check_sub_all_command(message: Message):
+    """Список user_id с двумя и более активными PRO-подписками (3 / 5 / 10 устройств)."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    await message.answer("🔄 Ищу пользователей с несколькими активными подписками…")
+    try:
+        rows = await sql.list_users_with_multiple_active_pro_subscriptions()
+    except Exception as e:
+        logger.exception("Ошибка в /check_sub_all")
+        await message.answer(f"❌ Ошибка: {e}")
+        return
+
+    if not rows:
+        await message.answer("✅ Нет пользователей с двумя и более активными PRO-подписками (3/5/10).")
+        return
+
+    lines = [
+        f"📊 Пользователей с несколькими активными PRO-подписками: {len(rows)}\n",
+    ]
+    for uid, slots in rows:
+        tiers = ", ".join(_SUB_TIER_LABELS.get(str(s), f"{s} устр.") for s in slots)
+        lines.append(f"{uid} — {tiers}")
+
+    for chunk in _split_long_text("\n".join(lines)):
+        await message.answer(chunk)
+
+
 @router.message(Command(commands=['check_users']))
 async def check_users_command(message: Message):
     """Проверка соответствия дат окончания подписки у оплаченных пользователей (has_discount=True)"""
