@@ -180,11 +180,20 @@ def _parse_sub_target(raw: str) -> tuple[int, str, str]:
 
 
 _SUB_TIER_LABELS = {
-    "5": "5 устройств",
     "3": "3 устройства",
     "10": "10 устройств",
     "white": "мобильный (white)",
 }
+
+
+def _sub_tier_label(tier: str, user=None) -> str:
+    if tier == "5":
+        from lexicon import ru_device_phrase
+        from tariff_resolve import effective_user_devices
+
+        d = effective_user_devices(getattr(user, "devices", None) if user else None)
+        return ru_device_phrase(d)
+    return _SUB_TIER_LABELS.get(tier, tier)
 
 
 def _add_days_to_subscription_end(
@@ -492,14 +501,15 @@ async def pay_info_command(message: Message):
     used_wl_gb = await get_wl_used_gb_for_user(x3, target_id, trafic_wl)
     remaining_wl_gb = max(0.0, round(limit_wl - used_wl_gb, 2))
 
+    main_label = _sub_tier_label("5", user)
     body = (
         f"<b>/pay {target_id}</b>\n\n"
         f"Подписка в БД бота 3 устройства — {_pay_dt_str(db_dates[3])}\n"
         f"Подписка в панели — 3 устройства — {panel_lines[3]}\n"
-        f"Подписка в БД бота 5 устройства — {_pay_dt_str(db_dates[5])}\n"
-        f"Подписка в панели — 5 устройства — {panel_lines[5]}\n"
-        f"Подписка в БД бота 10 устройства — {_pay_dt_str(db_dates[10])}\n"
-        f"Подписка в панели — 10 устройства — {panel_lines[10]}\n\n"
+        f"Подписка в БД бота {main_label} — {_pay_dt_str(db_dates[5])}\n"
+        f"Подписка в панели — {main_label} — {panel_lines[5]}\n"
+        f"Подписка в БД бота 10 устройств — {_pay_dt_str(db_dates[10])}\n"
+        f"Подписка в панели — 10 устройств — {panel_lines[10]}\n\n"
         f"📡 <b>Антиглушилка</b>\n"
         f"├ Лимит: <b>{limit_wl:.2f} GB</b>\n"
         f"├ Использовано: <b>{used_wl_gb:.2f} GB</b>\n"
@@ -711,8 +721,9 @@ async def set_subscription_date(message: Message):
         if is_telegram_chat_id(user_id):
             try:
                 sub_link = await x3.sublink(username)
+                user_obj = await sql.get_user_object_by_user_id(user_id)
                 user_text = lexicon["sub_granted_notify"].format(
-                    tier=_SUB_TIER_LABELS.get(tier, tier),
+                    tier=_sub_tier_label(tier, user_obj),
                     end_date=_msk_dt_str(actual_date),
                 )
                 await bot.send_message(
@@ -735,7 +746,7 @@ async def set_subscription_date(message: Message):
             f"🔑 Панель: {username}\n"
             f"📅 Целевая дата (UTC): {target_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"📅 Установленная в панели дата (UTC): {actual_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"📝 Тариф: {_SUB_TIER_LABELS.get(tier, tier)}\n"
+            f"📝 Тариф: {_sub_tier_label(tier, await sql.get_user_object_by_user_id(user_id))}\n"
             f"💾 База данных обновлена."
             f"{notify_status}"
         )
@@ -1287,7 +1298,8 @@ async def check_sub_all_command(message: Message):
         f"📊 Пользователей с несколькими активными PRO-подписками: {len(rows)}\n",
     ]
     for uid, slots in rows:
-        tiers = ", ".join(_SUB_TIER_LABELS.get(str(s), f"{s} устр.") for s in slots)
+        user_obj = await sql.get_user_object_by_user_id(uid)
+        tiers = ", ".join(_sub_tier_label(str(s), user_obj) for s in slots)
         lines.append(f"{uid} — {tiers}")
 
     for chunk in _split_long_text("\n".join(lines)):

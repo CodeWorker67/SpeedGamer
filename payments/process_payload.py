@@ -9,7 +9,7 @@ from keyboard import create_kb, keyboard_sub_after_buy, BTN_BACK
 from lexicon import lexicon
 from logging_config import logger
 from payments.payload_parse import parse_payment_payload
-from tariff_resolve import panel_username
+from tariff_resolve import panel_username, is_main_variable_device_slots
 from wl_traffic.service import (
     credit_wl_subscription_bonus,
     get_wl_used_gb_for_user,
@@ -17,6 +17,9 @@ from wl_traffic.service import (
     restore_pro_squads_if_under_limit,
 )
 from wl_traffic.texts import format_wl_checker_traffic_purchase
+from device_addons import parse_add_devices_duration, current_main_device_limit
+from config_bd.utils import pro_subscription_end_active
+from tariff_resolve import SELF_DEVICES_MAX
 
 REFERRER_REF_BONUS_DAYS = 7
 
@@ -108,6 +111,53 @@ async def _process_traffic_topup(user_id: int, gb: int, method: str, amount: int
     return True
 
 
+async def _process_add_devices_payment(
+    user_id: int,
+    add_count: int,
+    method: str,
+    amount: int | float,
+) -> bool:
+    user_obj = await sql.get_user_object_by_user_id(user_id)
+    if user_obj is None or not pro_subscription_end_active(user_obj.subscription_end_date):
+        logger.error("add_devices: нет активной основной подписки user={}", user_id)
+        return False
+
+    user_id_str = panel_username(user_id, white=False, device_slots=5)
+    panel_resp = await x3.get_user_by_username(user_id_str)
+    panel_user = x3._panel_user_from_response(panel_resp)
+    if not panel_user or not x3._panel_user_is_active(panel_user):
+        logger.error("add_devices: нет активного клиента в панели user={}", user_id)
+        return False
+
+    current = await current_main_device_limit(x3, user_id, user_obj)
+    new_limit = min(SELF_DEVICES_MAX, current + int(add_count))
+    if new_limit <= current:
+        logger.error("add_devices: лимит не увеличился user={} cur={} add={}", user_id, current, add_count)
+        return False
+
+    if not await x3.set_hwid_device_limit(user_id_str, user_id, new_limit):
+        logger.error("add_devices: не удалось обновить лимит в панели user={}", user_id)
+        return False
+
+    await sql.update_user_devices(user_id, new_limit)
+    await post_payment_success(user_id, method, amount)
+    await _credit_partner_commission(user_id, method, amount)
+
+    added = new_limit - current
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text=lexicon["add_devices_success"].format(limit=new_limit, added=added),
+            parse_mode="HTML",
+            reply_markup=create_kb(1, back_to_main=BTN_BACK),
+        )
+    except Exception as e:
+        logger.error("add_devices notify {}: {}", user_id, e)
+
+    logger.info("add_devices ok user={} {} -> {}", user_id, current, new_limit)
+    return True
+
+
 async def process_confirmed_payment(payload) -> bool:
     """Обработка подтвержденного платежа. True — подписка/подарок применены успешно."""
     try:
@@ -129,6 +179,12 @@ async def process_confirmed_payment(payload) -> bool:
                 await sql.add_payment_stars(user_id, amount, False, payload)
             return await _process_traffic_topup(user_id, traffic_gb, method, amount)
 
+        add_devices_n = parse_add_devices_duration(str(duration_raw))
+        if add_devices_n is not None:
+            if method == 'stars':
+                await sql.add_payment_stars(user_id, amount, False, payload)
+            return await _process_add_devices_payment(user_id, add_devices_n, method, amount)
+
         duration = int(duration_raw)
         white_flag = payload_parts.get('white', 'False') == 'True'
         is_gift = payload_parts.get('gift', 'False') == 'True'
@@ -138,7 +194,7 @@ async def process_confirmed_payment(payload) -> bool:
             device_slots = int(device_raw) if device_raw is not None else 5
         except (TypeError, ValueError):
             device_slots = 5
-        if device_slots not in (3, 5, 10):
+        if not is_main_variable_device_slots(device_slots) and device_slots not in (3, 5, 10):
             device_slots = 5
 
         logger.info(
@@ -217,6 +273,11 @@ async def process_confirmed_payment(payload) -> bool:
             if not response:
                 logger.error(f"❌ Не удалось обновить клиента {user_id_str}")
                 return False
+
+            if not white_flag and is_main_variable_device_slots(device_slots):
+                await x3.set_hwid_device_limit(user_id_str, user_id, device_slots)
+                await x3.trim_hwid_devices_to_limit(user_id_str, device_slots)
+                await sql.update_user_devices(user_id, device_slots)
 
             result_active = await x3.activ(user_id_str)
             subscription_time = result_active.get('time', '-')

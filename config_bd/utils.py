@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 import time
 
@@ -158,6 +159,22 @@ def normalize_partner_id(raw: Any) -> Optional[str]:
     if pid <= 0:
         return None
     return str(pid)
+
+
+def normalize_ref_id(raw: Any) -> Optional[str]:
+    """ref123 / ref-11 / 123 → billing user_id реферера строкой; иначе None."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.startswith("ref"):
+        s = s[3:].strip()
+    if not s or not re.fullmatch(r"-?\d+", s):
+        return None
+    if int(s) == 0:
+        return None
+    return str(int(s))
 
 
 def _user_tuple(user: Users) -> Tuple:
@@ -490,6 +507,7 @@ class AsyncSQL:
                 stamp=stamp,
                 username=username or None,
                 fullname=fullname or None,
+                devices=5,
             ).on_conflict_do_nothing(index_elements=[Users.user_id])
             try:
                 result = await session.execute(stmt)
@@ -778,6 +796,32 @@ class AsyncSQL:
         if partner:
             await self.attach_partner_if_empty(partner, telegram_user_id=telegram_user_id)
 
+    async def attach_ref_if_empty(
+        self,
+        ref_raw: Any,
+        *,
+        telegram_user_id: Optional[int] = None,
+        internal_id: Optional[int] = None,
+    ) -> bool:
+        """Реферал (users.ref) только если поле пустое; не приглашает сам себя."""
+        ref = normalize_ref_id(ref_raw)
+        if not ref:
+            return False
+        async with self.session_factory() as session:
+            if internal_id is not None:
+                user = await session.get(Users, internal_id)
+            elif telegram_user_id is not None:
+                stmt = select(Users).where(Users.user_id == telegram_user_id)
+                user = (await session.execute(stmt)).scalar_one_or_none()
+            else:
+                return False
+            if user is None or user.user_id is None:
+                return False
+            billing_uid = int(user.user_id)
+            if str(billing_uid) == ref:
+                return False
+        return await self.try_set_ref_from_invite(billing_uid, ref)
+
     async def add_partner_balance(self, partner_user_id: int, amount: int) -> bool:
         if amount <= 0:
             return False
@@ -811,6 +855,12 @@ class AsyncSQL:
     async def update_subscription_end_date(self, user_id: int, end_date: datetime):
         async with self.session_factory() as session:
             stmt = update(Users).where(Users.user_id == user_id).values(subscription_end_date=end_date)
+            await session.execute(stmt)
+            await session.commit()
+
+    async def update_user_devices(self, user_id: int, devices: int) -> None:
+        async with self.session_factory() as session:
+            stmt = update(Users).where(Users.user_id == user_id).values(devices=int(devices))
             await session.execute(stmt)
             await session.commit()
 
@@ -2762,11 +2812,13 @@ class AsyncSQL:
             return 5
 
         def _device_tariff_label(device_slots: int) -> str:
+            from lexicon import ru_device_phrase
+
             if device_slots == 3:
-                return "3 устройства"
+                return ru_device_phrase(3)
             if device_slots == 10:
-                return "10 устройств"
-            return "5 устройств"
+                return ru_device_phrase(10)
+            return ru_device_phrase(5)
 
         def _row_report_fields(
             payload: Optional[str], is_gift: bool, amount: Any

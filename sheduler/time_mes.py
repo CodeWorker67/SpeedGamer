@@ -186,7 +186,13 @@ async def send_message_cron(bot: Bot):
                 t1 = end - timedelta(days=1)
                 t_h = end - timedelta(hours=1)
 
-                if '7' not in sent and _in_send_window(now, t7):
+                skip_early_push = tier in ('3', '10')
+
+                if (
+                    not skip_early_push
+                    and '7' not in sent
+                    and _in_send_window(now, t7)
+                ):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_7'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     sent.add('7')
@@ -197,7 +203,11 @@ async def send_message_cron(bot: Bot):
                     sent_count_7 += 1
                     ids_7.append(user_id)
                     logger.info(f"Отправлено push-уведомление пользователю {user_id} за 7 дней")
-                elif '3' not in sent and _in_send_window(now, t3):
+                elif (
+                    not skip_early_push
+                    and '3' not in sent
+                    and _in_send_window(now, t3)
+                ):
                     await bot.send_message(chat_id=user_id, text=lexicon['push_3'], reply_markup=keyboard)
                     await asyncio.sleep(0.05)
                     sent.add('3')

@@ -10,6 +10,7 @@ import aiohttp
 
 from config import PANEL_API_TOKEN, PANEL_URL, TRUE_SUB_LINK, MIRROR_SUB_LINK, SHORT_UUID_SECRET
 from config_bd.utils import AsyncSQL
+from lexicon import subscription_panel_label
 from logging_config import logger
 import random
 import string
@@ -18,10 +19,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 SUBSCRIPTION_SLOTS: Tuple[Tuple[str, str], ...] = (
-    ("main", "💫 Подписка · 5 устройств"),
-    ("3", "💫 Подписка · 3 устройства"),
-    ("10", "💫 Подписка · 10 устройств"),
-    ("white", "🦾 Мобильный тариф"),
+    ("main", subscription_panel_label("main", 5)),
+    ("3", subscription_panel_label("3", 5)),
+    ("10", subscription_panel_label("10", 5)),
+    ("white", subscription_panel_label("white", 5)),
 )
 
 
@@ -393,15 +394,18 @@ class X3:
             logger.error(f"Ошибка при получении ссылки для {user_id}: {e}")
         return ""
 
-    SUBSCRIPTION_SLOTS: Tuple[Tuple[str, str, str], ...] = (
-        ("main", "", "💫 Подписка · 5 устройств"),
-        ("3", "_3", "💫 Подписка · 3 устройства"),
-        ("10", "_10", "💫 Подписка · 10 устройств"),
-        ("white", "_white", "🦾 Мобильный тариф"),
+    SUBSCRIPTION_SLOT_SUFFIXES: Tuple[Tuple[str, str], ...] = (
+        ("main", ""),
+        ("3", "_3"),
+        ("10", "_10"),
+        ("white", "_white"),
     )
 
+    def _subscription_slot_label(self, slot_key: str, main_devices: int) -> str:
+        return subscription_panel_label(slot_key, main_devices)
+
     def username_for_slot(self, telegram_id: int, slot_key: str) -> str:
-        for key, suffix, _ in self.SUBSCRIPTION_SLOTS:
+        for key, suffix in self.SUBSCRIPTION_SLOT_SUFFIXES:
             if key == slot_key:
                 return f"{telegram_id}{suffix}"
         return str(telegram_id)
@@ -437,14 +441,17 @@ class X3:
         current_time = int(now.timestamp() * 1000)
         return user.get('status') == 'ACTIVE' and expiry_time > current_time
 
-    async def active_subscription_links(self, telegram_id: int) -> List[Tuple[str, str, str]]:
+    async def active_subscription_links(
+        self, telegram_id: int, *, main_devices: int = 5,
+    ) -> List[Tuple[str, str, str]]:
         """
         Все активные (не истёкшие) клиенты в панели для данного Telegram ID:
         отдельная запись на каждый слот — id, id_3, id_10, id_white.
         Возвращает (подпись кнопки, url, ключ слота).
         """
         out: List[Tuple[str, str, str]] = []
-        for slot_key, suffix, label in self.SUBSCRIPTION_SLOTS:
+        for slot_key, suffix in self.SUBSCRIPTION_SLOT_SUFFIXES:
+            label = self._subscription_slot_label(slot_key, main_devices)
             username = f"{telegram_id}{suffix}"
             users = await self.get_user_by_username(username)
             user = self._panel_user_from_response(users)
@@ -456,11 +463,12 @@ class X3:
         return out
 
     async def active_subscription_slots(
-        self, telegram_id: int,
+        self, telegram_id: int, *, main_devices: int = 5,
     ) -> List[Tuple[str, str, str, str]]:
         """Активные подписки: (ключ слота, подпись, id в панели, username)."""
         out: List[Tuple[str, str, str, str]] = []
-        for slot_key, suffix, label in self.SUBSCRIPTION_SLOTS:
+        for slot_key, suffix in self.SUBSCRIPTION_SLOT_SUFFIXES:
+            label = self._subscription_slot_label(slot_key, main_devices)
             username = f"{telegram_id}{suffix}"
             users = await self.get_user_by_username(username)
             user = self._panel_user_from_response(users)
@@ -526,6 +534,74 @@ class X3:
         except Exception as e:
             logger.error(f"delete_user_hwid_device {panel_user_id}: {e}")
             return False
+
+    async def set_hwid_device_limit(self, user_id_str: str, user_id: int, limit: int) -> bool:
+        """Обновляет hwidDeviceLimit в панели для существующего клиента."""
+        try:
+            user_response = await self.get_user_by_username(user_id_str)
+            if not user_response or 'response' not in user_response:
+                logger.error(f"set_hwid_device_limit: пользователь {user_id_str} не найден")
+                return False
+            user = self._panel_user_from_response(user_response)
+            if not user:
+                return False
+            panel_user_id = self._panel_user_id(user)
+            if panel_user_id is None or 'expireAt' not in user:
+                return False
+
+            raw_squads = user.get('activeInternalSquads', [])
+            squads = []
+            for s in raw_squads:
+                if isinstance(s, dict) and 'uuid' in s:
+                    squads.append(s['uuid'])
+                elif isinstance(s, str):
+                    squads.append(s)
+
+            data = {
+                "id": panel_user_id,
+                "status": user.get('status', 'ACTIVE'),
+                "expireAt": user['expireAt'],
+                "trafficLimitBytes": user.get('trafficLimitBytes', 0),
+                "trafficLimitStrategy": user.get('trafficLimitStrategy', "NO_RESET"),
+                "activeInternalSquads": squads,
+                "hwidDeviceLimit": int(limit),
+            }
+            session = await self._get_session()
+            async with session.patch(
+                f"{self.target_url}/api/users",
+                json=data,
+                params=self.params,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as response:
+                if response.status == 200:
+                    logger.info(f"hwidDeviceLimit={limit} для {user_id_str}")
+                    return True
+                error_text = await response.text() if response.content else "No body"
+                logger.error(f"set_hwid_device_limit HTTP {response.status}: {error_text}")
+                return False
+        except Exception as e:
+            logger.error(f"set_hwid_device_limit {user_id_str}: {e}")
+            return False
+
+    async def trim_hwid_devices_to_limit(self, user_id_str: str, limit: int) -> None:
+        """Удаляет лишние HWID (с конца списка), если подключено больше limit."""
+        user_response = await self.get_user_by_username(user_id_str)
+        user = self._panel_user_from_response(user_response) if user_response else None
+        if not user:
+            return
+        panel_user_id = self._panel_user_id(user)
+        if panel_user_id is None:
+            return
+        devices, total = await self.get_user_hwid_devices(str(panel_user_id))
+        while total > limit and devices:
+            hwid = devices[-1].get('hwid')
+            if not hwid:
+                break
+            if await self.delete_user_hwid_device(str(panel_user_id), hwid):
+                devices.pop()
+                total -= 1
+            else:
+                break
 
     async def activ(self, user_id: str):
         result = {'activ': '🔎 - Не подключён', 'time': '-'}

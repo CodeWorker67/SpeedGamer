@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InputMediaPhoto
@@ -9,13 +10,21 @@ from aiogram.types import CallbackQuery, InputMediaPhoto
 from bot import bot, sql
 from config import CHECKER_ID
 from keyboard import (
-    keyboard_buy_duration,
+    keyboard_contest_devices,
+    keyboard_contest_duration_new,
     keyboard_contest_win_reveal,
     keyboard_contest_win_take,
     keyboard_contest_win_urgency_buy,
+    keyboard_payment_method,
 )
-from lexicon import buy_text_for_pro_hwid, lexicon
+from lexicon import buy_text_for_pro_hwid, lexicon, self_devices_step_caption, self_payment_method_caption
 from logging_config import logger
+from tariff_resolve import (
+    SELF_DEVICES_MAX,
+    SELF_DEVICES_MIN,
+    extra_device_step_rub,
+    subscription_price_rub,
+)
 from utils.custom_emoji import emojify
 from utils.menu_photos import contest_win_photo
 
@@ -27,7 +36,9 @@ _followup_scheduled: set[int] = set()
 
 _INITIAL_DELAY_SEC = 10
 _FOLLOWUP_DELAY_SEC = 15 * 60
-_CONTEST_DEVICES = 5
+
+_CWIN_DUR_RE = re.compile(r"^cwin_dur_m(1|3)$")
+_CWIN_DEV_ADJ_RE = re.compile(r"^cwin_(inc|dec|go_pay)_m(1|3)_d(1[0-5]|[5-9])$")
 
 _INITIAL_CAPTION = (
     "⭐️ Поздравляем! Вы выиграли в конкурсе.\n\n"
@@ -51,8 +62,8 @@ _URGENCY_CAPTION = (
 )
 
 
-def _buy_menu_caption() -> str:
-    buy_txt = buy_text_for_pro_hwid(_CONTEST_DEVICES)
+def _contest_duration_menu_caption() -> str:
+    buy_txt = buy_text_for_pro_hwid(SELF_DEVICES_MIN)
     return f"{buy_txt}\n\n{lexicon['choose_duration']}"
 
 
@@ -72,6 +83,25 @@ async def _edit_contest_photo(
     await callback.message.edit_media(
         media=InputMediaPhoto(media=photo_id, caption=emojify(caption), parse_mode="HTML"),
         reply_markup=reply_markup,
+    )
+
+
+async def _show_contest_duration_menu(callback: CallbackQuery) -> None:
+    await _edit_contest_photo(
+        callback,
+        _contest_duration_menu_caption(),
+        keyboard_contest_duration_new(),
+    )
+
+
+async def _show_contest_devices_step(
+    callback: CallbackQuery, months: int, devices: int
+) -> None:
+    price = subscription_price_rub(months, devices)
+    await _edit_contest_photo(
+        callback,
+        self_devices_step_caption(months, devices, price),
+        keyboard_contest_devices(months, devices),
     )
 
 
@@ -173,11 +203,7 @@ async def contest_win_take(callback: CallbackQuery):
     await callback.answer()
     uid = callback.from_user.id
     try:
-        await _edit_contest_photo(
-            callback,
-            _buy_menu_caption(),
-            keyboard_buy_duration(_CONTEST_DEVICES),
-        )
+        await _show_contest_duration_menu(callback)
     except Exception as e:
         logger.warning("cwin_take edit failed for %s: %s", uid, e)
         return
@@ -189,10 +215,81 @@ async def contest_win_take(callback: CallbackQuery):
 async def contest_win_urgency_buy(callback: CallbackQuery):
     await callback.answer()
     try:
-        await _edit_contest_photo(
-            callback,
-            _buy_menu_caption(),
-            keyboard_buy_duration(_CONTEST_DEVICES),
-        )
+        await _show_contest_duration_menu(callback)
     except Exception as e:
         logger.warning("cwin_buy edit failed for %s: %s", callback.from_user.id, e)
+
+
+@router.callback_query(F.data == "cwin_back_prize")
+async def contest_back_to_prize(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        await _edit_contest_photo(
+            callback,
+            _REVEAL_CAPTION,
+            keyboard_contest_win_take(),
+        )
+    except Exception as e:
+        logger.warning("cwin_back_prize edit failed for %s: %s", callback.from_user.id, e)
+
+
+@router.callback_query(F.data == "cwin_back_dur")
+async def contest_back_to_duration(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        await _show_contest_duration_menu(callback)
+    except Exception as e:
+        logger.warning("cwin_back_dur edit failed for %s: %s", callback.from_user.id, e)
+
+
+@router.callback_query(F.data.regexp(_CWIN_DUR_RE))
+async def contest_duration_chosen(callback: CallbackQuery):
+    match = _CWIN_DUR_RE.fullmatch(callback.data or "")
+    if not match:
+        await callback.answer()
+        return
+    months = int(match.group(1))
+    await callback.answer()
+    try:
+        await _show_contest_devices_step(callback, months, SELF_DEVICES_MIN)
+    except Exception as e:
+        logger.warning("cwin_dur edit failed for %s: %s", callback.from_user.id, e)
+
+
+@router.callback_query(F.data.regexp(_CWIN_DEV_ADJ_RE))
+async def contest_devices_adjust(callback: CallbackQuery):
+    match = _CWIN_DEV_ADJ_RE.fullmatch(callback.data or "")
+    if not match:
+        await callback.answer()
+        return
+    action, months_s, devices_s = match.group(1), match.group(2), match.group(3)
+    months, devices = int(months_s), int(devices_s)
+    if action == "go_pay":
+        tariff = f"r_m{months}_d{devices}"
+        price = subscription_price_rub(months, devices)
+        await callback.answer()
+        try:
+            await _edit_contest_photo(
+                callback,
+                self_payment_method_caption(months, devices, price),
+                keyboard_payment_method(tariff),
+            )
+        except Exception as e:
+            logger.warning("cwin_go_pay edit failed for %s: %s", callback.from_user.id, e)
+        return
+    step = extra_device_step_rub(months)
+    if action == "inc":
+        if devices >= SELF_DEVICES_MAX:
+            await callback.answer()
+            return
+        devices += 1
+    else:
+        if devices <= SELF_DEVICES_MIN:
+            await callback.answer()
+            return
+        devices -= 1
+    await callback.answer()
+    try:
+        await _show_contest_devices_step(callback, months, devices)
+    except Exception as e:
+        logger.warning("cwin_dev_adj edit failed for %s: %s", callback.from_user.id, e)

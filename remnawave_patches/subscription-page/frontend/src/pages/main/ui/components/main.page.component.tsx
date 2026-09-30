@@ -62,39 +62,44 @@ function subPagePayFromBuild(): { apiBase: string; apiKey: string } {
     }
 }
 
-type DurationId =
-    | 'm1_d3'
-    | 'm3_d3'
-    | 'm6_d3'
-    | 'm12_d3'
-    | 'm1_d5'
-    | 'm3_d5'
-    | 'm6_d5'
-    | 'm12_d5'
-    | 'm1_d10'
-    | 'm3_d10'
-    | 'm6_d10'
-    | 'm12_d10'
+type PayMethodId = 'fk_sbp' | 'fk_card'
 
-type PayMethodId = 'fk_sbp' | 'fk_card' | 'stars' | 'cryptobot'
-
-const PAY_METHODS_ALL: ReadonlyArray<{ id: PayMethodId; label: string }> = [
+const PAY_METHODS: ReadonlyArray<{ id: PayMethodId; label: string }> = [
     { id: 'fk_sbp', label: 'СБП' },
-    { id: 'fk_card', label: 'Карты РФ' },
-    { id: 'stars', label: 'Telegram Stars' },
-    { id: 'cryptobot', label: 'Telegram Cryptobot' }
+    { id: 'fk_card', label: 'Карты РФ' }
 ]
-const PAY_METHODS_SITE = PAY_METHODS_ALL.filter(
-    (m) => m.id === 'fk_sbp' || m.id === 'fk_card'
-)
 
-type DeviceTier = 3 | 5 | 10
-
-function deviceTierFromUsername(username: string): DeviceTier {
-    if (username.endsWith('_10')) return 10
-    if (username.endsWith('_3')) return 3
-    return 5
+type RenewOption = {
+    months: number
+    price_rub: number
+    devices: number
+    tariff_id: string
 }
+
+type AddDeviceOption = {
+    add_count: number
+    price_rub: number
+}
+
+type PaymentOptions = {
+    legacy_slot: boolean
+    payment_allowed: boolean
+    message?: string
+    devices: number | null
+    subscription_active: boolean
+    main_subscription_active: boolean
+    renew_options: RenewOption[]
+    add_devices: {
+        current_devices: number
+        max_add: number
+        billable_months: number
+        options: AddDeviceOption[]
+    } | null
+}
+
+type PayIntent =
+    | { kind: 'renew'; months: number }
+    | { kind: 'add_devices'; add_count: number }
 
 /**
  * user_id из username страницы подписки.
@@ -117,87 +122,114 @@ function parseSubPageUserId(username: string): number | null {
     return null
 }
 
-function payBlockTitle(tier: DeviceTier): string {
-    if (tier === 3) return 'Оплата подписки на 3 устройства'
-    if (tier === 10) return 'Оплата подписки на 10 устройств'
-    return 'Оплата подписки на 5 устройств'
+function devicesLabel(n: number): string {
+    const mod10 = n % 10
+    const mod100 = n % 100
+    if (mod100 >= 11 && mod100 <= 14) return `${n} устройств`
+    if (mod10 === 1) return `${n} устройство`
+    if (mod10 >= 2 && mod10 <= 4) return `${n} устройства`
+    return `${n} устройств`
 }
 
-const TARIFF_ROWS: Record<
-    DeviceTier,
-    ReadonlyArray<{ label: string; duration: DurationId }>
-> = {
-    3: [
-        { label: '1 месяц — 199 ₽', duration: 'm1_d3' },
-        { label: '3 месяца — 499 ₽ (выгода −16%)', duration: 'm3_d3' },
-        { label: '6 месяцев — 999 ₽ (выгода −16%)', duration: 'm6_d3' },
-        { label: '12 месяцев — 1188 ₽ (выгода −50%)', duration: 'm12_d3' }
-    ],
-    5: [
-        { label: '1 месяц — 299 ₽', duration: 'm1_d5' },
-        { label: '3 месяца — 749 ₽ (выгода −16%)', duration: 'm3_d5' },
-        { label: '6 месяцев — 1349 ₽ (выгода −25%)', duration: 'm6_d5' },
-        { label: '12 месяцев — 1799 ₽ (выгода −50%)', duration: 'm12_d5' }
-    ],
-    10: [
-        { label: '1 месяц — 659 ₽', duration: 'm1_d10' },
-        { label: '3 месяца — 1349 ₽ (выгода −32%)', duration: 'm3_d10' },
-        { label: '6 месяцев — 2399 ₽ (выгода −39%)', duration: 'm6_d10' },
-        { label: '12 месяцев — 3239 ₽ (выгода −59%)', duration: 'm12_d10' }
-    ]
+function renewLabel(opt: RenewOption): string {
+    const m = opt.months === 1 ? '1 месяц' : `${opt.months} месяца`
+    return `${m} — ${opt.price_rub} ₽ (${devicesLabel(opt.devices)})`
 }
 
 function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
     const { user } = useSubscription()
-    const tier = useMemo(() => deviceTierFromUsername(user.username), [user.username])
     const userId = useMemo(() => parseSubPageUserId(user.username), [user.username])
-    const isSiteUser = userId != null && userId <= 0
-    const payMethods = isSiteUser ? PAY_METHODS_SITE : PAY_METHODS_ALL
     const payCfg = useMemo(() => subPagePayFromBuild(), [])
-    const subscriptionStillActive = useMemo(() => {
-        if (user.userStatus !== 'ACTIVE') return false
-        if (user.daysLeft == null) return true
-        return Number(user.daysLeft) > 0
-    }, [user.daysLeft, user.userStatus])
 
-    const [payExpanded, setPayExpanded] = useState(() => !subscriptionStillActive)
+    const [options, setOptions] = useState<PaymentOptions | null>(null)
+    const [optionsError, setOptionsError] = useState<string | null>(null)
+    const [loadingOptions, setLoadingOptions] = useState(false)
+
+    const [payExpanded, setPayExpanded] = useState(true)
+    const [addExpanded, setAddExpanded] = useState(false)
     const [modalOpen, setModalOpen] = useState(false)
-    const [pickedDuration, setPickedDuration] = useState<DurationId | null>(null)
+    const [intent, setIntent] = useState<PayIntent | null>(null)
     const [busyMethod, setBusyMethod] = useState<PayMethodId | null>(null)
     const [errorText, setErrorText] = useState<string | null>(null)
 
-    useEffect(() => {
-        setPayExpanded(!subscriptionStillActive)
-    }, [subscriptionStillActive])
+    const loadOptions = useCallback(async () => {
+        if (userId == null || !payCfg.apiKey) return
+        setLoadingOptions(true)
+        setOptionsError(null)
+        const qs = new URLSearchParams({
+            username: user.username,
+            user_id: String(userId)
+        })
+        const url = `${payCfg.apiBase.replace(/\/$/, '')}/api/v1/sub_page/payment-options?${qs}`
+        try {
+            const res = await fetch(url, {
+                headers: { 'X-Sub-Page-Api-Key': payCfg.apiKey }
+            })
+            const data: unknown = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                const msg =
+                    typeof data === 'object' &&
+                    data !== null &&
+                    'detail' in data &&
+                    typeof (data as { detail?: unknown }).detail === 'string'
+                        ? (data as { detail: string }).detail
+                        : `Ошибка ${res.status}`
+                setOptionsError(msg)
+                setOptions(null)
+                return
+            }
+            setOptions(data as PaymentOptions)
+        } catch {
+            setOptionsError('Не удалось загрузить тарифы')
+            setOptions(null)
+        } finally {
+            setLoadingOptions(false)
+        }
+    }, [payCfg.apiBase, payCfg.apiKey, user.username, userId])
 
-    const openPay = useCallback((d: DurationId) => {
+    useEffect(() => {
+        void loadOptions()
+    }, [loadOptions])
+
+    const openPay = useCallback((next: PayIntent) => {
         setErrorText(null)
-        setPickedDuration(d)
+        setIntent(next)
         setModalOpen(true)
     }, [])
 
     const closeModal = useCallback(() => {
         if (busyMethod) return
         setModalOpen(false)
-        setPickedDuration(null)
+        setIntent(null)
         setErrorText(null)
     }, [busyMethod])
 
     const submitPay = useCallback(
         async (method: PayMethodId) => {
-            if (userId == null || pickedDuration == null) return
-            if (!payCfg.apiKey) return
+            if (userId == null || intent == null || !payCfg.apiKey) return
             setBusyMethod(method)
             setErrorText(null)
-            const url = `${payCfg.apiBase.replace(/\/$/, '')}/api/v1/sub_page/pay/${method}`
+            const base = payCfg.apiBase.replace(/\/$/, '')
+            const path =
+                intent.kind === 'renew'
+                    ? `/api/v1/sub_page/pay/renew/${method}`
+                    : `/api/v1/sub_page/pay/add_devices/${method}`
+            const body =
+                intent.kind === 'renew'
+                    ? { user_id: userId, username: user.username, months: intent.months }
+                    : {
+                          user_id: userId,
+                          username: user.username,
+                          add_count: intent.add_count
+                      }
             try {
-                const res = await fetch(url, {
+                const res = await fetch(`${base}${path}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Sub-Page-Api-Key': payCfg.apiKey
                     },
-                    body: JSON.stringify({ user_id: userId, duration: pickedDuration })
+                    body: JSON.stringify(body)
                 })
                 const data: unknown = await res.json().catch(() => ({}))
                 if (!res.ok) {
@@ -211,10 +243,9 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                     setErrorText(msg)
                     return
                 }
-                const obj = data as { payment_url?: string; bot_url?: string }
-                const redirect = obj.payment_url || obj.bot_url
-                if (redirect && typeof redirect === 'string') {
-                    window.location.assign(redirect)
+                const obj = data as { payment_url?: string }
+                if (obj.payment_url && typeof obj.payment_url === 'string') {
+                    window.location.assign(obj.payment_url)
                     return
                 }
                 setErrorText('В ответе нет ссылки для перехода')
@@ -224,11 +255,10 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                 setBusyMethod(null)
             }
         },
-        [pickedDuration, payCfg.apiBase, payCfg.apiKey, userId]
+        [intent, payCfg.apiBase, payCfg.apiKey, user.username, userId]
     )
 
     if (!payCfg.apiKey) {
-        if (subscriptionStillActive) return null
         return (
             <Card p="md" radius="lg" withBorder>
                 <Text c="dimmed" size="sm">
@@ -240,7 +270,6 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
     }
 
     if (userId == null) {
-        if (subscriptionStillActive) return null
         return (
             <Card p="md" radius="lg" withBorder>
                 <Text c="dimmed" size="sm">
@@ -250,7 +279,44 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         )
     }
 
-    const rows = TARIFF_ROWS[tier]
+    if (loadingOptions && !options) {
+        return (
+            <Card p="md" radius="lg" withBorder>
+                <Text c="dimmed" size="sm">
+                    Загрузка тарифов…
+                </Text>
+            </Card>
+        )
+    }
+
+    if (optionsError) {
+        return (
+            <Card p="md" radius="lg" withBorder>
+                <Text c="red" size="sm">
+                    {optionsError}
+                </Text>
+            </Card>
+        )
+    }
+
+    if (!options) return null
+
+    if (options.legacy_slot) {
+        return (
+            <Card p="md" radius="lg" withBorder>
+                <Text c="dimmed" size="sm">
+                    {options.message ||
+                        'Эта подписка (3 или 10 устройств, старый формат) не продлевается здесь. Оформите новую в боте или на сайте.'}
+                </Text>
+            </Card>
+        )
+    }
+
+    const devices = options.devices ?? 5
+    const showAdd =
+        options.add_devices != null &&
+        options.add_devices.max_add > 0 &&
+        options.add_devices.options.length > 0
 
     return (
         <>
@@ -259,7 +325,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                     <UnstyledButton onClick={() => setPayExpanded((v) => !v)} w="100%">
                         <Group gap="sm" justify="space-between" wrap="nowrap">
                             <Title c="white" order={5} style={{ flex: 1, textAlign: 'left' }}>
-                                {payBlockTitle(tier)}
+                                Продление подписки · {devicesLabel(devices)}
                             </Title>
                             <Box
                                 aria-hidden
@@ -278,18 +344,18 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                     </UnstyledButton>
                     <Collapse in={payExpanded}>
                         <Stack gap="sm">
-                            {rows.map((row) => (
+                            {options.renew_options.map((row) => (
                                 <Button
-                                    key={row.duration}
+                                    key={row.tariff_id}
                                     fullWidth
                                     justify="space-between"
-                                    onClick={() => openPay(row.duration)}
+                                    onClick={() => openPay({ kind: 'renew', months: row.months })}
                                     radius="md"
                                     size={isMobile ? 'sm' : 'md'}
                                     variant="light"
                                 >
                                     <Text fw={500} size="sm" style={{ textAlign: 'left' }}>
-                                        {row.label}
+                                        {renewLabel(row)}
                                     </Text>
                                 </Button>
                             ))}
@@ -297,6 +363,57 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                     </Collapse>
                 </Stack>
             </Card>
+
+            {showAdd ? (
+                <Card p="md" radius="lg" withBorder>
+                    <Stack gap="md">
+                        <UnstyledButton onClick={() => setAddExpanded((v) => !v)} w="100%">
+                            <Group gap="sm" justify="space-between" wrap="nowrap">
+                                <Title c="white" order={5} style={{ flex: 1, textAlign: 'left' }}>
+                                    Добавить устройство
+                                </Title>
+                                <Box
+                                    aria-hidden
+                                    c="dimmed"
+                                    style={{
+                                        flexShrink: 0,
+                                        fontSize: 12,
+                                        lineHeight: 1,
+                                        transform: addExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                        transition: 'transform 200ms ease'
+                                    }}
+                                >
+                                    ▼
+                                </Box>
+                            </Group>
+                        </UnstyledButton>
+                        <Text c="dimmed" size="xs">
+                            Сейчас {devicesLabel(options.add_devices!.current_devices)}. Доплата до конца
+                            подписки (~{options.add_devices!.billable_months} мес.).
+                        </Text>
+                        <Collapse in={addExpanded}>
+                            <Stack gap="sm">
+                                {options.add_devices!.options.map((row) => (
+                                    <Button
+                                        key={row.add_count}
+                                        fullWidth
+                                        onClick={() =>
+                                            openPay({ kind: 'add_devices', add_count: row.add_count })
+                                        }
+                                        radius="md"
+                                        size={isMobile ? 'sm' : 'md'}
+                                        variant="light"
+                                    >
+                                        <Text fw={500} size="sm">
+                                            + {row.add_count} уст. — {row.price_rub} ₽
+                                        </Text>
+                                    </Button>
+                                ))}
+                            </Stack>
+                        </Collapse>
+                    </Stack>
+                </Card>
+            ) : null}
 
             <Modal
                 centered
@@ -312,7 +429,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                         </Text>
                     ) : null}
                     <SimpleGrid cols={1} spacing="xs">
-                        {payMethods.map((m) => (
+                        {PAY_METHODS.map((m) => (
                             <Button
                                 key={m.id}
                                 loading={busyMethod === m.id}

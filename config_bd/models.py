@@ -28,6 +28,7 @@ class Users(Base):
     in_chanel = Column(Boolean, default=False)
     reserve_field = Column(Boolean, default=False)
     subscription_end_date = Column(DateTime, nullable=True)
+    devices = Column(Integer, default=5)
     white_subscription_end_date = Column(DateTime, nullable=True)
     last_notification_date = Column(Date, nullable=True)
     last_broadcast_status = Column(String(100), nullable=True)

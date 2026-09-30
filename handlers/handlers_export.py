@@ -668,11 +668,6 @@ _TRAFFIC_STAT_CONFIRM_KB = InlineKeyboardMarkup(
     ]
 )
 _TRAFFIC_STAT_DEVICE_ORDER = (10, 5, 3)
-_TRAFFIC_STAT_BTN = {
-    3: "🔗 Подключить VPN (3 устройства)",
-    5: "🔗 Подключить VPN (5 устройств)",
-    10: "🔗 Подключить VPN (10 устройств)",
-}
 
 
 def _utc_naive(dt: datetime) -> datetime:
@@ -1118,8 +1113,22 @@ def _trafic_stat_connect_kb(links: list[tuple[str, str]]) -> Optional[InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _trafic_stat_connect_btn(tier: int, main_devices: int) -> str:
+    from lexicon import connect_vpn_btn_label
+
+    if tier == 3:
+        return connect_vpn_btn_label("3", main_devices)
+    if tier == 10:
+        return connect_vpn_btn_label("10", main_devices)
+    return connect_vpn_btn_label("main", main_devices)
+
+
 async def _trafic_stat_connect_links(billing_uid: int) -> list[tuple[str, str]]:
-    """Ссылки на все активные PRO-подписки пользователя (3 / 5 / 10 устройств)."""
+    """Ссылки на все активные PRO-подписки пользователя (3 / основной / 10)."""
+    from utils.menu_ui import main_devices_for_user
+
+    user = await sql.get_user_object_by_user_id(billing_uid)
+    main_dev = main_devices_for_user(user)
     found: dict[int, str] = {}
     try:
         panel_users = await fetch_all_pro_panel_users(x3, billing_uid)
@@ -1143,7 +1152,7 @@ async def _trafic_stat_connect_links(billing_uid: int) -> list[tuple[str, str]]:
         found[_devices_from_panel_username(username)] = str(url)
 
     return [
-        (_TRAFFIC_STAT_BTN[devices], found[devices])
+        (_trafic_stat_connect_btn(devices, main_dev), found[devices])
         for devices in (3, 5, 10)
         if devices in found
     ]

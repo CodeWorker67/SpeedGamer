@@ -9,7 +9,12 @@ from config import PLATEGA_API_KEY, PLATEGA_MERCHANT_ID, ADMIN_IDS, BOT_URL
 from keyboard import keyboard_payment_sbp, create_kb
 from lexicon import lexicon, payment_tariff_summary_pro
 from utils.menu_ui import edit_or_send_photo
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
+from tariff_resolve import (
+    tariff_days_for_x3,
+    tariff_rub_and_desc,
+    device_from_tariff_key,
+    bot_tariff_purchase_blocked_reason,
+)
 from logging_config import logger
 
 router = Router()
@@ -190,12 +195,17 @@ async def pay_for_gift(val: str, des: str, user_id: str, duration: str, white: b
 
 @router.callback_query(F.data.startswith('sbp_'))
 async def process_payment_sbp(callback: CallbackQuery):
-    await callback.answer()
     gift_flag = False
     white_flag = False
     if 'gift_' in callback.data:
         gift_flag = True
     duration = callback.data.replace('sbp_r_', '').replace('sbp_gift_r_', '')
+    duration_plain = duration.replace('white_', '', 1) if 'white' in duration else duration
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+    await callback.answer()
     desc_key = duration
 
     rub_amount, des_text = tariff_rub_and_desc(desc_key)
@@ -258,12 +268,17 @@ async def process_payment_sbp(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith('card_'))
 async def process_payment_card(callback: CallbackQuery):
-    await callback.answer()
     gift_flag = False
     white_flag = False
     if 'gift_' in callback.data:
         gift_flag = True
     duration = callback.data.replace('card_r_', '').replace('card_gift_r_', '')
+    duration_plain = duration.replace('white_', '', 1) if 'white' in duration else duration
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+    await callback.answer()
     desc_key = duration
 
     rub_amount, des_text = tariff_rub_and_desc(desc_key)

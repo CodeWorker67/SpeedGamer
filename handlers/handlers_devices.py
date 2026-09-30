@@ -7,7 +7,7 @@ from typing import Any
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 
-from bot import x3
+from bot import sql, x3
 from keyboard import (
     BTN_BACK,
     create_kb,
@@ -17,7 +17,7 @@ from keyboard import (
     keyboard_devices_subscriptions,
 )
 from logging_config import logger
-from utils.menu_ui import edit_or_send_photo
+from utils.menu_ui import edit_or_send_photo, main_devices_for_user
 
 router = Router()
 
@@ -75,12 +75,18 @@ def _device_line(device: dict[str, Any], index: int) -> str:
 
 
 async def _active_slots(telegram_id: int) -> list[tuple[str, str, str]]:
-    slots = await x3.active_subscription_slots(telegram_id)
+    user = await sql.get_user_object_by_user_id(telegram_id)
+    main_dev = main_devices_for_user(user)
+    slots = await x3.active_subscription_slots(telegram_id, main_devices=main_dev)
     return [(slot_key, label, user_uuid) for slot_key, label, user_uuid, _username in slots]
 
 
 async def _slot_context(telegram_id: int, slot_key: str) -> tuple[str, str, str] | None:
-    for sk, label, user_uuid, username in await x3.active_subscription_slots(telegram_id):
+    user = await sql.get_user_object_by_user_id(telegram_id)
+    main_dev = main_devices_for_user(user)
+    for sk, label, user_uuid, username in await x3.active_subscription_slots(
+        telegram_id, main_devices=main_dev
+    ):
         if sk == slot_key:
             return label, user_uuid, username
     return None

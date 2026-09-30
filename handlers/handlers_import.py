@@ -2,8 +2,10 @@ from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InputMediaPhoto
 
-from bot import bot, x3
+from bot import bot, sql, x3
+from lexicon import subscription_panel_label
 from X3 import SUBSCRIPTION_SLOTS, panel_username_for_telegram_slot
+from utils.menu_ui import main_devices_for_user
 from keyboard import (
     BTN_BACK,
     create_kb,
@@ -99,7 +101,10 @@ def _active_slot_buttons(slots) -> list[tuple[str, str]]:
 
 
 async def _show_slot_select(callback: CallbackQuery) -> None:
-    slots = await x3.active_subscription_slots(callback.from_user.id)
+    uid = callback.from_user.id
+    user = await sql.get_user_object_by_user_id(uid)
+    main_dev = main_devices_for_user(user)
+    slots = await x3.active_subscription_slots(uid, main_devices=main_dev)
     subscriptions = _active_slot_buttons(slots)
     if not subscriptions:
         await edit_or_send_photo(
@@ -118,8 +123,9 @@ async def _show_slot_select(callback: CallbackQuery) -> None:
 
 
 async def _finish_import(callback: CallbackQuery, os_key: str, app_key: str, slot: str) -> None:
-    labels = dict(SUBSCRIPTION_SLOTS)
-    label = labels.get(slot, slot)
+    user = await sql.get_user_object_by_user_id(callback.from_user.id)
+    main_dev = main_devices_for_user(user)
+    label = subscription_panel_label(slot, main_dev)
     username = panel_username_for_telegram_slot(callback.from_user.id, slot)
     sub_url = await x3.sublink(username)
 
@@ -214,7 +220,10 @@ async def import_select_app(callback: CallbackQuery):
 async def import_select_sub_legacy(callback: CallbackQuery):
     """Старые сообщения: после приложения ещё выбирали подписку."""
     await callback.answer()
-    slots = await x3.active_subscription_slots(callback.from_user.id)
+    uid = callback.from_user.id
+    user = await sql.get_user_object_by_user_id(uid)
+    main_dev = main_devices_for_user(user)
+    slots = await x3.active_subscription_slots(uid, main_devices=main_dev)
     subscriptions = _active_slot_buttons(slots)
     if not subscriptions:
         await edit_or_send_photo(

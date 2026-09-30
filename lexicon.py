@@ -17,18 +17,66 @@ _BUY_OUTRO = (
 
 _PAYMENT_PRO_HEAD = 'Тариф — 💫 ВПН ДЛЯ СВОИХ PRO\nМножество серверов на выбор.\n'
 _PAYMENT_PRO_3_LINE = '3 устройства, безлимитный трафик.'
-_PAYMENT_PRO_5_LINE = '5 устройств, безлимитный трафик.'
+
+
+def ru_device_phrase(n: int) -> str:
+    n = abs(int(n))
+    if 11 <= (n % 100) <= 14:
+        w = 'устройств'
+    elif n % 10 == 1:
+        w = 'устройство'
+    elif 2 <= (n % 10) <= 4:
+        w = 'устройства'
+    else:
+        w = 'устройств'
+    return f'{n} {w}'
+
+
+def subscription_panel_label(slot: str, main_devices: int = 5) -> str:
+    if slot == '3':
+        return '💫 Подписка · 3 устройства'
+    if slot == '10':
+        return '💫 Подписка · 10 устройств'
+    if slot == 'white':
+        return '🦾 Мобильный тариф'
+    return f'💫 Подписка · {ru_device_phrase(main_devices)}'
+
+
+def connect_vpn_btn_label(slot: str, main_devices: int = 5) -> str:
+    if slot == '3':
+        return '🔗 Подключить ВПН (3 устройства)'
+    if slot == '10':
+        return '🔗 Подключить ВПН (10 устройств)'
+    if slot == 'white':
+        return '🔗 Подключить ВПН (мобильный)'
+    return f'🔗 Подключить ВПН ({ru_device_phrase(main_devices)})'
+
+
+def profile_tier_label(slot: str, main_devices: int = 5) -> str:
+    if slot == '3':
+        return ru_device_phrase(3)
+    if slot == '10':
+        return ru_device_phrase(10)
+    return ru_device_phrase(main_devices)
 
 
 def buy_text_for_pro_hwid(device_limit: int) -> str:
     """Текст «Купить подписку»: до 3 или до 10 устройств в описании (порог по лимиту панели)."""
-    dev = _BUY_DEVICES_10 if device_limit >= 5 else _BUY_DEVICES_3
+    if device_limit >= 10:
+        dev = _BUY_DEVICES_10
+    elif device_limit >= 5:
+        dev = f'• До {ru_device_phrase(device_limit)} одновременно\n'
+    else:
+        dev = _BUY_DEVICES_3
     return _BUY_INTRO + dev + _BUY_OUTRO
 
 
 def payment_link_pro_for_hwid(device_limit: int) -> str:
     """Описание PRO (не white) для счёта / экрана оплаты."""
-    line = _PAYMENT_PRO_5_LINE if device_limit >= 5 else _PAYMENT_PRO_3_LINE
+    if device_limit >= 5:
+        line = f'{ru_device_phrase(device_limit)}, безлимитный трафик.'
+    else:
+        line = _PAYMENT_PRO_3_LINE
     return _PAYMENT_PRO_HEAD + line
 
 
@@ -87,7 +135,7 @@ lexicon = {
     'no_sub': '❌ Подписка не найдена. Сначала оформите доступ к ВПН ДЛЯ СВОИХ.',
     'to_sub': 'Ниже — ваши активные подписки в панели. Выберите нужную ссылку и откройте её; далее следуйте инструкциям в личном кабинете.',
 
-    'payment_link': _PAYMENT_PRO_HEAD + _PAYMENT_PRO_5_LINE,
+    'payment_link': _PAYMENT_PRO_HEAD + f'{ru_device_phrase(5)}, безлимитный трафик.',
 
     'wl_bonus_line': '\n\n📡 Антиглушилка: <b>+{gb:g} GB</b> трафика включено в тариф.',
 
@@ -137,7 +185,17 @@ lexicon = {
                 '❗️ Нажмите на ссылку для автоматического копирования\n\n'
                 f'Если есть вопросы — напишите в <a href="{SUPPORT_URL}">Поддержку</a>',
 
-    'gift_start': 'Выберите подписку ВПН ДЛЯ СВОИХ, которую хотите подарить другу.',
+    'gift_start': 'Подарите другу доступ к ВПН ДЛЯ СВОИХ.',
+    'tariff_legacy_slots': 'Тарифы на 3 и 10 устройств больше не продаются. Оформите подписку на 5+ устройств через «Для себя».',
+    'tariff_discontinued': 'Этот тариф больше не продаётся. Откройте «Купить подписку» и выберите 1 или 3 месяца.',
+
+    'add_devices_payment_link': 'Для оплаты дополнительных устройств перейдите по ссылке:',
+    'add_devices_stars_desc': 'Дополнительно {n} устр. до конца подписки — {price} ⭐',
+    'add_devices_success': (
+        '✅ Лимит устройств увеличен!\n\n'
+        'Теперь доступно устройств: <b>{limit}</b>\n'
+        '(добавлено: +{added})'
+    ),
     'error_payment': 'Произошла ошибка при создании счета, попробуйте еще раз.',
     'payment_too_many_pending': 'Одновременно может быть не больше {0} незавершённых счетов (все способы оплаты вместе). '
                                   'Дождитесь оплаты или отмены предыдущих.',
@@ -228,6 +286,7 @@ lexicon = {
                        "нажмите кнопку 🎁 Подарить подписку",
 
     'trial_success': "✅ Триал ВПН ДЛЯ СВОИХ успешно активирован!\n"
+                     "📱 {3} · 📡 Антиглушилка 2 GB\n"
                      "└ действует до: {0}\n\n"
                      "📅 Добавлено дней: {1}\n\n"
                      "🔑 Ваш ключ доступа:\n"
@@ -593,9 +652,8 @@ dct_price = {
     '5000sale': 2790,
 }
 
-# Акция 3+1 (120 дней): цена как у тарифа на 3 месяца для того же числа устройств.
-for _promo_devices in (3, 5, 10):
-    dct_price[f'120_d{_promo_devices}'] = dct_price[f'm3_d{_promo_devices}']
+# Акция 3+1 (120 дней): 5 устройств, цена как m3_d5.
+dct_price['120_d5'] = dct_price['m3_d5']
 
 # Устаревшие цены для callback gift_r_new_* / stars new_* (старые сообщения в чатах).
 dct_price_friends = {
@@ -632,14 +690,10 @@ dct_desc = {
     '5000sale': '♾ Навсегда — 2790 ₽',
 }
 
-_PROMO_120_DESC_PREFIX = {3: '🔹', 5: '🔸', 10: '🏆'}
-_PROMO_120_DESC_DEVICES = {3: '3️⃣ устройства', 5: '5️⃣ устройств', 10: '🔟 устройств'}
-for _promo_devices in (3, 5, 10):
-    _promo_rub = dct_price[f'120_d{_promo_devices}']
-    dct_desc[f'120_d{_promo_devices}'] = (
-        f"{_PROMO_120_DESC_PREFIX[_promo_devices]} 4 месяца (3+1) — "
-        f"{_PROMO_120_DESC_DEVICES[_promo_devices]} — {_promo_rub} ₽"
-    )
+_promo_rub_120 = dct_price['120_d5']
+dct_desc['120_d5'] = (
+    f"🔸 4 месяца (3+1) — 5️⃣ устройств — {_promo_rub_120} ₽"
+)
 
 dct_desc_friends = {
     'new_7': '🤌 7 дней - 99 ₽',
@@ -677,17 +731,7 @@ def _price_rub_for_desc_key(desc_key: str):
     return dct_price.get(desc_key)
 
 
-def _ru_device_phrase(n: int) -> str:
-    n = abs(int(n))
-    if 11 <= (n % 100) <= 14:
-        w = 'устройств'
-    elif n % 10 == 1:
-        w = 'устройство'
-    elif 2 <= (n % 10) <= 4:
-        w = 'устройства'
-    else:
-        w = 'устройств'
-    return f'{n} {w}'
+_ru_device_phrase = ru_device_phrase
 
 
 def _ru_month_duration_line(months: int) -> str:
@@ -716,12 +760,60 @@ def _ru_days_duration_line(days: int) -> str:
     return f'Длительность - {n} {w}'
 
 
+def _ru_selected_term_line(months: int) -> str:
+    n = int(months)
+    if 11 <= (n % 100) <= 14:
+        w = 'месяцев'
+    elif n % 10 == 1:
+        w = 'месяц'
+    elif 2 <= (n % 10) <= 4:
+        w = 'месяца'
+    else:
+        w = 'месяцев'
+    return f'Выбранный срок подписки: {n} {w}'
+
+
+def self_new_duration_caption(devices: int = 5) -> str:
+    return (
+        '<b>Выберите срок подписки:</b>\n\n'
+        f'Кол-во устройств: {devices}'
+    )
+
+
+def self_devices_step_caption(months: int, devices: int, price: int) -> str:
+    return (
+        f'{_ru_selected_term_line(months)}\n'
+        f'Кол-во устройств: {devices}\n'
+        f'Цена: {price} руб\n\n'
+        'Вы можете добавить дополнительное устройство:'
+    )
+
+
+def self_payment_method_caption(months: int, devices: int, price: int) -> str:
+    return (
+        f'{_ru_selected_term_line(months)}\n'
+        f'Кол-во устройств: {devices}\n'
+        f'Цена: {price} руб\n\n'
+        'Выберите метод оплаты:'
+    )
+
+
+def gift_duration_caption() -> str:
+    return (
+        '<b>Выберите срок подарка:</b>\n\n'
+        'В подарочной подписке <b>5 устройств</b>.'
+    )
+
+
 def payment_tariff_summary_pro(desc_key: str) -> str:
     """Текст тарифа PRO перед оплатой: устройства, срок из колбэка, сумма из dct_price."""
-    from tariff_resolve import device_from_tariff_key, tariff_days_for_x3
+    from tariff_resolve import device_from_tariff_key, subscription_price_rub, tariff_days_for_x3, tariff_rub_and_desc
     from wl_traffic.texts import format_wl_bonus_suffix
 
-    price = _price_rub_for_desc_key(desc_key)
+    try:
+        price, _ = tariff_rub_and_desc(desc_key)
+    except KeyError:
+        price = _price_rub_for_desc_key(desc_key)
     if price is None:
         return payment_link_pro_for_hwid(5)
 

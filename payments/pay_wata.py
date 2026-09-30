@@ -12,7 +12,12 @@ from config import ADMIN_IDS, BOT_URL, WATA_API_BASE, WATA_API_CARD_KEY, WATA_AP
 from keyboard import keyboard_payment_sbp, create_kb
 from lexicon import lexicon, payment_tariff_summary_pro
 from utils.menu_ui import edit_or_send_photo
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
+from tariff_resolve import (
+    tariff_days_for_x3,
+    tariff_rub_and_desc,
+    device_from_tariff_key,
+    bot_tariff_purchase_blocked_reason,
+)
 from logging_config import logger
 
 router = Router()
@@ -307,9 +312,14 @@ def _duration_from_wata_callback(data: str, prefix: str, gift_prefix: str) -> tu
 
 @router.callback_query(F.data.startswith("wata_sbp_"))
 async def process_payment_wata_sbp(callback: CallbackQuery):
-    await callback.answer()
     data = callback.data
     duration, gift_flag = _duration_from_wata_callback(data, "wata_sbp_r_", "wata_sbp_gift_r_")
+    duration_plain = duration.replace("white_", "", 1) if "white" in duration else duration
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+    await callback.answer()
     desc_key = duration
     rub_amount, des_text = tariff_rub_and_desc(desc_key)
     if callback.from_user.id in ADMIN_IDS:
@@ -369,9 +379,14 @@ async def process_payment_wata_sbp(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("wata_card_"))
 async def process_payment_wata_card(callback: CallbackQuery):
-    await callback.answer()
     data = callback.data
     duration, gift_flag = _duration_from_wata_callback(data, "wata_card_r_", "wata_card_gift_r_")
+    duration_plain = duration.replace("white_", "", 1) if "white" in duration else duration
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+    await callback.answer()
     desc_key = duration
     rub_amount, des_text = tariff_rub_and_desc(desc_key)
     if callback.from_user.id in ADMIN_IDS:

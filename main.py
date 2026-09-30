@@ -11,7 +11,7 @@ from middleware.user_throttle import UserThrottleMiddleware
 from config_bd.models import create_tables, engine
 from config_bd.migrate_users_wl_fields import migrate as migrate_wl_fields
 from config_bd.migrate_wl_traffic_meta import migrate as migrate_wl_traffic_meta
-from payments import pay_stars, pay_cryptobot, pay_freekassa, pay_wl_traffic
+from payments import pay_stars, pay_cryptobot, pay_freekassa, pay_wl_traffic, pay_add_devices
 # from payments import pay_platega
 # from payments import pay_wata
 from sheduler.check_connect import check_connect
@@ -21,7 +21,7 @@ from sheduler.check_online import check_online_daily
 from sheduler.check_fk import check_fk
 from sheduler.check_wata_sbp import check_wata_sbp
 from sheduler.check_wata_card import check_wata_card
-from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_discount_push, handlers_contest_funnel, handlers_wl_traffic
+from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_add_devices, handlers_discount_push, handlers_contest_funnel, handlers_wl_traffic
 from sheduler.time_mes import send_message_cron
 from logging_config import logger
 from sheduler.time_mes_not_sub import send_push_cron
@@ -62,6 +62,7 @@ async def main() -> None:
     dp.include_router(handlers_admin.router)
     dp.include_router(handlers_import.router)
     dp.include_router(handlers_devices.router)
+    dp.include_router(handlers_add_devices.router)
     dp.include_router(handlers_user.router)
     dp.include_router(handlers_wl_traffic.router)
     dp.include_router(handlers_export.router)
@@ -70,6 +71,7 @@ async def main() -> None:
     # dp.include_router(pay_wata.router)
     dp.include_router(pay_freekassa.router)
     dp.include_router(pay_wl_traffic.router)
+    dp.include_router(pay_add_devices.router)
     dp.include_router(pay_stars.router)
     dp.include_router(pay_cryptobot.router)
 

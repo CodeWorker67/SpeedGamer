@@ -40,6 +40,7 @@ from config import (
     JWT_SECRET,
     PAYMENT_MAX_PENDING_PER_USER,
     PUBLIC_SITE_URL,
+    SITE_URL,
     SHOP_ID_FREEKASSA,
     SMTP_FROM,
     SMTP_HOST,
@@ -51,7 +52,7 @@ from config import (
 )
 from unisender_go import send_transactional_email, unisender_go_configured
 from config_bd.models import create_tables
-from config_bd.utils import user_row_to_api_dict
+from config_bd.utils import pro_subscription_end_active, user_row_to_api_dict
 from keyboard import keyboard_payment_stars
 from lexicon import TARIFF_SAVINGS_PCT, dct_desc, dct_price, lexicon, payment_tariff_summary_pro
 from logging_config import logger
@@ -59,10 +60,24 @@ from payments.payload_source import SITE, SUBPAGE
 from payments.pay_cryptobot import create_cryptobot_payment
 from payments.pay_freekassa import pay_site
 from payments.payment_limits import payment_creation_allowed
+from device_addons import (
+    add_devices_duration_payload,
+    add_devices_price_rub,
+    billable_months_until_end,
+    current_main_device_limit,
+    max_add_devices_available,
+)
 from tariff_resolve import (
+    SELF_DEVICES_MAX,
+    SELF_DEVICES_MIN,
+    SELF_SUBSCRIPTION_MONTHS,
+    bot_tariff_purchase_blocked_reason,
     device_from_tariff_key,
+    effective_user_devices,
+    extra_device_step_rub,
     panel_username,
     panel_username_for_site_user,
+    subscription_price_rub,
     tariff_days_for_x3,
     tariff_rub_and_desc,
 )
@@ -71,8 +86,13 @@ from wl_traffic.service import (
     apply_wl_subscription_bonus,
     get_wl_used_gb_for_user,
     parse_traffic_duration,
+    restore_pro_squads_if_under_limit,
     subscription_bonus_gb,
 )
+
+_TRIAL_DAYS = 1
+_TRIAL_DEVICE_SLOTS = 5
+_SITE_SUBSCRIPTION_MONTHS_ORDER = (3, 1)
 
 # ── Rate limiter ────────────────────────────────────────────────────
 _rate_limits: dict[str, list[float]] = {}
@@ -199,10 +219,9 @@ DurationId = Literal[
 _PRO_TARIFF_RE = re.compile(r"^m\d+_d\d+$")
 
 TARIFF_PUBLIC: list[tuple[str, str, int, bool]] = []
-for _devices in (3, 5, 10):
-    for _months, _label in ((12, "12 месяцев"), (6, "6 месяцев"), (3, "3 месяца"), (1, "1 месяц")):
-        _tid = f"m{_months}_d{_devices}"
-        TARIFF_PUBLIC.append((_tid, f"{_label} · {_devices} устройств", _devices, False))
+for _months, _label in ((3, "3 месяца"), (1, "1 месяц")):
+    _tid = f"m{_months}_d{SELF_DEVICES_MIN}"
+    TARIFF_PUBLIC.append((_tid, f"{_label} · {SELF_DEVICES_MIN} устройств", SELF_DEVICES_MIN, False))
 
 _CORS_ORIGIN_REGEX = os.environ.get(
     "CORS_ORIGIN_REGEX",
@@ -236,9 +255,14 @@ def _is_pro_tariff_id(tariff_id: str) -> bool:
 def _site_tariff_price(tariff_id: str) -> Optional[int]:
     if not _is_pro_tariff_id(tariff_id):
         return None
-    if tariff_id not in dct_price:
+    blocked = bot_tariff_purchase_blocked_reason(tariff_id)
+    if blocked:
         return None
-    return int(dct_price[tariff_id])
+    try:
+        rub, _ = tariff_rub_and_desc(tariff_id)
+        return int(rub)
+    except KeyError:
+        return None
 
 
 def _tariff_parts(tariff_id: str) -> tuple[str, str, bool, int]:
@@ -535,11 +559,13 @@ class TelegramAuthIn(BaseModel):
     username: Optional[str] = None
     photo_url: Optional[str] = None
     partner: Optional[str] = None
+    ref: Optional[str] = None
 
 
 class BotLoginIn(BaseModel):
     token: str
     partner: Optional[str] = None
+    ref: Optional[str] = None
 
 
 class CreatePaymentIn(BaseModel):
@@ -548,14 +574,26 @@ class CreatePaymentIn(BaseModel):
     is_gift: bool = False
 
 
+class CreateAddDevicesPaymentIn(BaseModel):
+    add_count: int = Field(..., ge=1, le=5)
+    method: Literal["sbp", "card"]
+
+
 class CreateTrafficPaymentIn(BaseModel):
     gb: str = Field(..., description="Размер пакета в GB (ключ из WL_TRAFFIC_TARIFFS)")
     method: Literal["sbp", "card"]
 
 
-class SubPagePayIn(BaseModel):
+class SubPagePayRenewIn(BaseModel):
     user_id: int = Field(..., description="Telegram user id или отрицательный billing id сайта")
-    duration: DurationId
+    username: str = Field(..., min_length=1, max_length=100)
+    months: Literal[1, 3]
+
+
+class SubPagePayAddDevicesIn(BaseModel):
+    user_id: int
+    username: str = Field(..., min_length=1, max_length=100)
+    add_count: int = Field(..., ge=1, le=5)
 
 
 class SubPageDeviceDeleteIn(BaseModel):
@@ -571,14 +609,6 @@ async def _resolve_sub_page_billing_user(user_id: int) -> int:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
     return int(row[1])
-
-
-def _reject_sub_page_telegram_only_pay(user_id: int) -> None:
-    if user_id <= 0:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Для пользователей сайта доступна оплата только СБП и картой.",
-        )
 
 
 def _hwid_device_limit(panel_user: dict[str, Any]) -> Optional[int]:
@@ -613,6 +643,57 @@ async def _sub_page_panel_user(username: str) -> dict[str, Any]:
     return user
 
 
+def parse_sub_page_user_id(username: str) -> Optional[int]:
+    """Billing user_id из username подписки (как на фронте страницы)."""
+    base = (username or "").strip()
+    if base.endswith("_white"):
+        base = base[: -len("_white")]
+    if base.endswith("_10"):
+        base = base[: -len("_10")]
+    elif base.endswith("_3"):
+        base = base[: -len("_3")]
+
+    def _numeric(s: str) -> Optional[int]:
+        if not re.fullmatch(r"-?\d+", s):
+            return None
+        return int(s)
+
+    direct = _numeric(base)
+    if direct is not None:
+        return direct
+    if base.startswith("n"):
+        return _numeric(base[1:])
+    return None
+
+
+def sub_page_username_is_legacy_slot(username: str) -> bool:
+    u = (username or "").strip()
+    if u.endswith("_white"):
+        u = u[: -len("_white")]
+    return u.endswith("_3") or u.endswith("_10")
+
+
+async def _sub_page_validate_user(username: str, user_id: int) -> int:
+    parsed = parse_sub_page_user_id(username)
+    if parsed is None or int(parsed) != int(user_id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "user_id не совпадает с username подписки",
+        )
+    if user_id == 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Некорректный user_id")
+    return await _resolve_sub_page_billing_user(user_id)
+
+
+def _sub_page_reject_legacy(username: str) -> None:
+    if sub_page_username_is_legacy_slot(username):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Продление слотов на 3 или 10 устройств (legacy) недоступно на этой странице. "
+            "Используйте Telegram-бот или личный кабинет на сайте.",
+        )
+
+
 _STAMP_RE = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
 
 
@@ -633,17 +714,20 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=6, max_length=256)
     stamp: Optional[str] = None
     partner: Optional[str] = None
+    ref: Optional[str] = None
 
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=256)
+    ref: Optional[str] = None
 
 
 class VerifyEmailIn(BaseModel):
     email: EmailStr
     code: str = Field(min_length=6, max_length=6)
     partner: Optional[str] = None
+    ref: Optional[str] = None
 
 
 class ResendCodeIn(BaseModel):
@@ -654,6 +738,7 @@ class GoogleAuthIn(BaseModel):
     credential: str
     stamp: Optional[str] = None
     partner: Optional[str] = None
+    ref: Optional[str] = None
 
 
 class ResetPasswordIn(BaseModel):
@@ -691,18 +776,6 @@ async def _deliver_reset_code(email: str, code: str, row: tuple) -> None:
             logger.warning("Telegram password reset failed: {}", e)
     if not smtp_ok and tg is None:
         logger.warning("Password reset code for {} not delivered (configure SMTP or Telegram)", email)
-
-
-async def _bot_deeplink_for_sub_page() -> str:
-    if BOT_URL and str(BOT_URL).strip():
-        return str(BOT_URL).rstrip("/")
-    try:
-        me = await bot.get_me()
-        if me.username:
-            return f"https://t.me/{me.username}"
-    except Exception as e:
-        logger.warning("sub_page pay: bot.get_me failed: {}", e)
-    return "https://t.me/"
 
 
 async def _send_verification_code(email: str) -> str:
@@ -764,7 +837,9 @@ async def auth_check_status(token: str, request: Request):
     tg_user = entry["telegram_user"]
     uid = int(tg_user["id"])
     partner_raw = request.query_params.get("partner")
+    ref_raw = request.query_params.get("ref")
     await sql.ensure_telegram_user_with_partner(uid, partner_raw)
+    await sql.attach_ref_if_empty(ref_raw, telegram_user_id=uid)
     jwt_token = _issue_jwt(user_id=uid, auth="telegram", username=tg_user.get("username"))
     del _tg_auth_tokens[token]
     return _auth_response(
@@ -798,6 +873,7 @@ async def auth_bot_login(body: BotLoginIn, request: Request):
     tg_user = entry["telegram_user"]
     uid = int(tg_user["id"])
     await sql.ensure_telegram_user_with_partner(uid, body.partner)
+    await sql.attach_ref_if_empty(body.ref, telegram_user_id=uid)
     del _bot_site_login_tokens[raw]
     jwt_token = _issue_jwt(user_id=uid, auth="telegram", username=tg_user.get("username"))
     return _auth_response(
@@ -814,10 +890,12 @@ async def auth_bot_login(body: BotLoginIn, request: Request):
 @app.post("/api/auth/telegram")
 async def auth_telegram(body: TelegramAuthIn, request: Request):
     partner_raw = body.partner
-    data = body.model_dump(exclude_none=True, exclude={"partner"})
+    ref_raw = body.ref
+    data = body.model_dump(exclude_none=True, exclude={"partner", "ref"})
     _verify_telegram_login(data)
     uid = int(body.id)
     await sql.ensure_telegram_user_with_partner(uid, partner_raw)
+    await sql.attach_ref_if_empty(ref_raw, telegram_user_id=uid)
     token = _issue_jwt(user_id=uid, auth="telegram", username=body.username)
     return _auth_response(
         request,
@@ -845,10 +923,14 @@ async def auth_register(body: RegisterIn, request: Request):
             if not current_stamp or current_stamp == "email":
                 await sql.set_user_stamp_by_internal_id(int(existing[0]), stamp)
         await sql.attach_partner_if_empty(body.partner, internal_id=int(existing[0]))
+        await sql.attach_ref_if_empty(body.ref, internal_id=int(existing[0]))
         await _send_verification_code(str(body.email))
         return {"success": True, "requires_verification": True, "email": str(body.email).strip().lower()}
     h = _hash_password(body.password)
-    await sql.register_email_user(str(body.email), h, stamp=stamp, partner=body.partner or "")
+    internal_id = await sql.register_email_user(
+        str(body.email), h, stamp=stamp, partner=body.partner or ""
+    )
+    await sql.attach_ref_if_empty(body.ref, internal_id=internal_id)
     em = str(body.email).strip().lower()
     await _send_verification_code(em)
     return {"success": True, "requires_verification": True, "email": em}
@@ -876,6 +958,7 @@ async def auth_verify_email(body: VerifyEmailIn, request: Request):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Неверный код")
     internal_id = int(row[0])
     await sql.attach_partner_if_empty(body.partner, internal_id=internal_id)
+    await sql.attach_ref_if_empty(body.ref, internal_id=internal_id)
     await sql.set_email_verified(internal_id, True)
     await sql.set_activation_pass_by_email(str(body.email), None)
     em = row[_U_EMAIL] or str(body.email).strip().lower()
@@ -920,10 +1003,12 @@ async def auth_google(body: GoogleAuthIn, request: Request):
         internal_id = await sql.register_email_user(
             em, h, stamp=stamp, partner=body.partner or ""
         )
+        await sql.attach_ref_if_empty(body.ref, internal_id=internal_id)
         await sql.set_email_verified(internal_id, True)
     else:
         internal_id = int(row[0])
         await sql.attach_partner_if_empty(body.partner, internal_id=internal_id)
+        await sql.attach_ref_if_empty(body.ref, internal_id=internal_id)
         if not bool(row[_U_EMAIL_VERIFIED]):
             await sql.set_email_verified(internal_id, True)
     token = _issue_jwt(user_id=internal_id, auth="email", username=em)
@@ -958,9 +1043,14 @@ async def auth_login(body: LoginIn, request: Request):
             },
         )
     internal_id = int(row[0])
+    await sql.attach_ref_if_empty(body.ref, internal_id=internal_id)
     em = row[_U_EMAIL] or str(body.email).strip().lower()
     token = _issue_jwt(user_id=internal_id, auth="email", username=em)
     return _auth_response(request, token, {"id": internal_id, "email": em})
+
+
+def _public_site_base_url() -> str:
+    return (PUBLIC_SITE_URL or SITE_URL or "").strip().rstrip("/")
 
 
 @app.post("/api/auth/reset-password")
@@ -1099,12 +1189,20 @@ async def user_account(ctx: JwtCtx):
 
 @app.get("/api/user/referrals")
 async def user_referrals(ctx: JwtCtx):
-    user_id = await resolve_telegram_user_id(ctx)
-    count = await sql.select_ref_count(user_id)
-    paid_count = await sql.select_ref_paid_count(user_id)
-    base = (BOT_URL or "").rstrip("/")
-    link = f"{base}?start=ref{user_id}"
-    return {"count": count, "paid_count": paid_count, "referral_link": link}
+    row = await _user_row_from_jwt(ctx)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    billing_uid = int(row[_U_USER_ID])
+    count = await sql.select_ref_count(billing_uid)
+    paid_count = await sql.select_ref_paid_count(billing_uid)
+    site_base = _public_site_base_url()
+    link = f"{site_base}?start=ref{billing_uid}" if site_base else ""
+    return {
+        "count": count,
+        "paid_count": paid_count,
+        "bonus_days": paid_count * 7,
+        "referral_link": link,
+    }
 
 
 @app.get("/api/user/profile")
@@ -1117,6 +1215,8 @@ async def user_profile(ctx: JwtCtx):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     out = user_row_to_api_dict(user)
     billing_uid = int(user.user_id)
+    out["main_devices"] = effective_user_devices(getattr(user, "devices", None))
+    out["main_subscription_active"] = pro_subscription_end_active(user.subscription_end_date)
     trafic_wl, limit_wl = await sql.get_wl_limits(billing_uid)
     used_gb = await get_wl_used_gb_for_user(x3, billing_uid, trafic_wl)
     remaining_gb = max(0.0, round(limit_wl - used_gb, 2))
@@ -1144,6 +1244,92 @@ async def user_wl_traffic(ctx: JwtCtx):
         "used_gb": used_gb_r,
         "remaining_gb": remaining_gb,
         "limit_exhausted": limit_gb > 0 and used_gb_r >= limit_gb,
+    }
+
+
+def _panel_username_for_trial(billing_uid: int) -> str:
+    if billing_uid > 0:
+        return panel_username(
+            billing_uid,
+            white=False,
+            device_slots=_TRIAL_DEVICE_SLOTS,
+        )
+    return panel_username_for_site_user(
+        billing_uid,
+        white=False,
+        device_slots=_TRIAL_DEVICE_SLOTS,
+    )
+
+
+@app.post("/api/trial/activate")
+async def trial_activate(ctx: JwtCtx):
+    """1 день, 5 устройств, WL-триал — как кнопка «free_vpn» в боте."""
+    row = await _user_row_from_jwt(ctx)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if ctx.get("auth") == "email" and not bool(row[_U_EMAIL_VERIFIED]):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Подтвердите email")
+
+    billing_uid = int(row[_U_USER_ID])
+    user_data = await sql.get_user(billing_uid)
+    in_panel = bool(user_data and len(user_data) > 4 and user_data[4])
+    if in_panel:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "Триал уже взят"},
+        )
+
+    panel_un = _panel_username_for_trial(billing_uid)
+    existing_panel = await x3.get_user_by_username(panel_un)
+    if existing_panel and existing_panel.get("response"):
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "Триал уже взят"},
+        )
+
+    if user_data is None:
+        await sql.add_user(billing_uid, False)
+    await sql.update_field_bool_3(billing_uid, True)
+
+    ok = await x3.addClient(
+        _TRIAL_DAYS,
+        panel_un,
+        billing_uid,
+        hwid_device_limit=_TRIAL_DEVICE_SLOTS,
+    )
+    if not ok:
+        await sql.update_field_bool_3(billing_uid, False)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Не удалось активировать триал",
+        )
+
+    if await sql.get_user(billing_uid) is not None:
+        await sql.update_in_panel(billing_uid)
+    else:
+        await sql.add_user(billing_uid, True)
+
+    result_active = await x3.activ(panel_un)
+    time_str = result_active.get("time", "-")
+    if time_str != "-":
+        try:
+            end_dt = datetime.strptime(time_str, "%d-%m-%Y %H:%M МСК")
+            await sql.update_subscription_end_date(billing_uid, end_dt)
+        except ValueError as e:
+            logger.error("trial_activate: parse end date uid={}: {}", billing_uid, e)
+
+    await sql.init_wl_trial_limits(billing_uid)
+    await sql.update_user_devices(billing_uid, _TRIAL_DEVICE_SLOTS)
+    trafic_wl, limit_wl = await sql.get_wl_limits(billing_uid)
+    used_gb = await get_wl_used_gb_for_user(x3, billing_uid, trafic_wl)
+    await restore_pro_squads_if_under_limit(x3, billing_uid, used_gb, limit_wl)
+
+    sub_url = await x3.sublink(panel_un)
+    logger.info("trial site user {} panel username={}", billing_uid, panel_un)
+    return {
+        "success": True,
+        "expires": time_str,
+        "subscription_url": sub_url or None,
     }
 
 
@@ -1182,7 +1368,37 @@ async def config_tariffs():
             item["first_payment_only"] = True
         item["wl_bonus_gb"] = subscription_bonus_gb(tariff_days_for_x3(tid))
         out.append(item)
-    return out
+    min_monthly = min(
+        subscription_price_rub(m, SELF_DEVICES_MIN) / m for m in SELF_SUBSCRIPTION_MONTHS
+    )
+    return {
+        "tariffs": out,
+        "devices_min": SELF_DEVICES_MIN,
+        "devices_max": SELF_DEVICES_MAX,
+        "months": list(_SITE_SUBSCRIPTION_MONTHS_ORDER),
+        "extra_device_rub": {
+            str(m): extra_device_step_rub(m) for m in SELF_SUBSCRIPTION_MONTHS
+        },
+        "min_price_rub": subscription_price_rub(1, SELF_DEVICES_MIN),
+        "min_monthly_from_rub": int(min_monthly),
+    }
+
+
+@app.get("/api/config/subscription-quote")
+async def config_subscription_quote(months: int, devices: int):
+    tid = f"m{int(months)}_d{int(devices)}"
+    blocked = bot_tariff_purchase_blocked_reason(tid)
+    if blocked:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, blocked)
+    price = subscription_price_rub(int(months), int(devices))
+    return {
+        "tariff_id": tid,
+        "price": price,
+        "months": int(months),
+        "devices": int(devices),
+        "days": tariff_days_for_x3(tid),
+        "wl_bonus_gb": subscription_bonus_gb(tariff_days_for_x3(tid)),
+    }
 
 
 @app.get("/api/config/traffic-tariffs")
@@ -1306,6 +1522,9 @@ async def payments_create(ctx: JwtCtx, body: CreatePaymentIn):
             "payment_id": result.get("id") or "",
         }
 
+    blocked = bot_tariff_purchase_blocked_reason(tariff_id)
+    if blocked:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, blocked)
     if _site_tariff_price(tariff_id) is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown tariff")
 
@@ -1334,6 +1553,108 @@ async def payments_create(ctx: JwtCtx, body: CreatePaymentIn):
         white=white,
         device=device_n,
         is_gift=body.is_gift,
+        kind=body.method,
+        telegram_username=site_uname,
+        payload_source=SITE,
+    )
+    if result["status"] == "rate_limited":
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
+        )
+    if result["status"] != "pending":
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж")
+    return {
+        "payment_url": result.get("url") or "",
+        "payment_id": result.get("id") or "",
+    }
+
+
+async def _user_object_from_ctx(ctx: JwtCtx):
+    if ctx.get("auth") == "email":
+        return await sql.get_user_object_by_internal_id(int(ctx["user_id"]))
+    return await sql.get_user_object_by_user_id(int(ctx["user_id"]))
+
+
+@app.get("/api/user/add-devices")
+async def user_add_devices_options(ctx: JwtCtx):
+    user = await _user_object_from_ctx(ctx)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not pro_subscription_end_active(user.subscription_end_date):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Нет активной основной подписки",
+        )
+    billing_uid = int(user.user_id)
+    devices = await current_main_device_limit(x3, billing_uid, user)
+    max_add = max_add_devices_available(devices)
+    end_dt = user.subscription_end_date
+    if end_dt is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нет даты окончания подписки")
+    months = billable_months_until_end(end_dt)
+    options: list[dict[str, Any]] = []
+    for n in range(1, max_add + 1):
+        price = add_devices_price_rub(n, end_dt)
+        options.append(
+            {
+                "add_count": n,
+                "price_rub": price,
+                "button_label": f"+ {n} уст. (+{price} ₽)",
+            }
+        )
+    end_iso = end_dt.isoformat() if end_dt.tzinfo else end_dt.replace(tzinfo=timezone.utc).isoformat()
+    return {
+        "current_devices": devices,
+        "subscription_end": end_iso,
+        "billable_months": months,
+        "max_add": max_add,
+        "options": options,
+    }
+
+
+@app.post("/api/payments/create-add-devices")
+async def payments_create_add_devices(ctx: JwtCtx, body: CreateAddDevicesPaymentIn):
+    row = await _user_row_from_jwt(ctx)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    user = await _user_object_from_ctx(ctx)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not pro_subscription_end_active(user.subscription_end_date):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет активной основной подписки")
+
+    billing_user_id = int(row[_U_USER_ID])
+
+    devices = await current_main_device_limit(x3, billing_user_id, user)
+    add_n = int(body.add_count)
+    if add_n < 1 or add_n > max_add_devices_available(devices):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нельзя добавить столько устройств")
+
+    end_dt = user.subscription_end_date
+    if end_dt is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нет даты окончания подписки")
+
+    price = add_devices_price_rub(add_n, end_dt)
+    if billing_user_id in ADMIN_IDS:
+        price = 1
+
+    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "FreeKassa is not configured")
+
+    duration = add_devices_duration_payload(add_n)
+    site_uname = ctx.get("username")
+    if not isinstance(site_uname, str):
+        site_uname = None
+
+    result = await pay_site(
+        val=str(price),
+        des=f"Доп. устройства +{add_n}",
+        billing_user_id=billing_user_id,
+        duration=duration,
+        white=False,
+        device=devices,
+        is_gift=False,
         kind=body.method,
         telegram_username=site_uname,
         payload_source=SITE,
@@ -1485,30 +1806,34 @@ async def gift_activate_web(gift_id: str):
 
 # ── Sub page payments ───────────────────────────────────────────────
 
-def _subpage_rub(user_id: int, duration: DurationId) -> int:
-    rub, _ = tariff_rub_and_desc(duration)
-    if user_id in ADMIN_IDS:
-        return 1
-    return rub
+async def _sub_page_devices_for_user(billing_uid: int, panel_username: str) -> int:
+    user_obj = await sql.get_user_object_by_user_id(billing_uid)
+    return await current_main_device_limit(
+        x3,
+        billing_uid,
+        user_obj,
+        panel_username=panel_username.strip(),
+    )
 
 
-@app.post("/api/v1/sub_page/pay/fk_sbp")
-async def sub_page_pay_fk_sbp(body: SubPagePayIn, request: Request, _: SubPageAuth):
-    _rate_limit_or_raise(_client_ip_for_rate_limit(request), "sub_page_fk_sbp", max_req=20, window=300)
-    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
-    billing_user_id = await _resolve_sub_page_billing_user(body.user_id)
-    desc_key, duration_str, white, device_n = _tariff_parts(body.duration)
-    price = _subpage_rub(billing_user_id, body.duration)
+async def _sub_page_fk_result(
+    *,
+    billing_user_id: int,
+    price: int,
+    description: str,
+    duration_str: str,
+    device_n: int,
+    kind: Literal["sbp", "card"],
+) -> dict[str, str]:
     result = await pay_site(
         val=str(price),
-        des=dct_desc.get(desc_key, f"ВПН ДЛЯ СВОИХ — {duration_str} дней"),
+        des=description,
         billing_user_id=billing_user_id,
         duration=duration_str,
-        white=white,
+        white=False,
         device=device_n,
         is_gift=False,
-        kind="sbp",
+        kind=kind,
         telegram_username=None,
         payload_source=SUB_PAGE_PAYLOAD_SOURCE,
     )
@@ -1518,118 +1843,196 @@ async def sub_page_pay_fk_sbp(body: SubPagePayIn, request: Request, _: SubPageAu
             lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
         )
     if result["status"] != "pending":
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж FreeKassa (СБП)")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж")
     return {
         "payment_url": result.get("url") or "",
         "payment_id": result.get("id") or "",
     }
 
 
-@app.post("/api/v1/sub_page/pay/fk_card")
-async def sub_page_pay_fk_card(body: SubPagePayIn, request: Request, _: SubPageAuth):
-    _rate_limit_or_raise(_client_ip_for_rate_limit(request), "sub_page_fk_card", max_req=20, window=300)
+@app.get("/api/v1/sub_page/payment-options")
+async def sub_page_payment_options(
+    request: Request,
+    _: SubPageAuth,
+    username: str = Query(..., min_length=1, max_length=100),
+    user_id: int = Query(..., description="Billing user_id из username"),
+):
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), "sub_page_payment_options", max_req=60, window=300
+    )
+    billing_uid = await _sub_page_validate_user(username, user_id)
+
+    if sub_page_username_is_legacy_slot(username):
+        return {
+            "legacy_slot": True,
+            "payment_allowed": False,
+            "renew_allowed": False,
+            "add_devices_allowed": False,
+            "message": (
+                "Подписки на 3 или 10 устройств (старый формат) нельзя продлить здесь. "
+                "Оформите новую подписку в боте или на сайте."
+            ),
+            "devices": None,
+            "subscription_active": False,
+            "main_subscription_active": False,
+            "renew_options": [],
+            "add_devices": None,
+        }
+
+    panel_user = await _sub_page_panel_user(username)
+    subscription_active = x3._panel_user_is_active(panel_user)
+    devices = await _sub_page_devices_for_user(billing_uid, username)
+    hw = _hwid_device_limit(panel_user)
+    if hw is not None:
+        devices = hw
+
+    renew_options: list[dict[str, Any]] = []
+    for months in _SITE_SUBSCRIPTION_MONTHS_ORDER:
+        tariff_id = f"m{months}_d{devices}"
+        blocked = bot_tariff_purchase_blocked_reason(tariff_id)
+        if blocked:
+            continue
+        renew_options.append(
+            {
+                "months": months,
+                "price_rub": subscription_price_rub(months, devices),
+                "devices": devices,
+                "tariff_id": tariff_id,
+            }
+        )
+
+    user_obj = await sql.get_user_object_by_user_id(billing_uid)
+    main_sub_active = bool(
+        user_obj is not None
+        and pro_subscription_end_active(user_obj.subscription_end_date)
+    )
+
+    add_block = None
+    if subscription_active and main_sub_active and user_obj and user_obj.subscription_end_date:
+        max_add = max_add_devices_available(devices)
+        end_dt = user_obj.subscription_end_date
+        options: list[dict[str, Any]] = []
+        for n in range(1, max_add + 1):
+            options.append(
+                {"add_count": n, "price_rub": add_devices_price_rub(n, end_dt)}
+            )
+        add_block = {
+            "current_devices": devices,
+            "max_add": max_add,
+            "billable_months": billable_months_until_end(end_dt),
+            "options": options,
+        }
+
+    return {
+        "legacy_slot": False,
+        "payment_allowed": True,
+        "renew_allowed": True,
+        "add_devices_allowed": bool(add_block and add_block["max_add"] > 0),
+        "devices": devices,
+        "subscription_active": subscription_active,
+        "main_subscription_active": main_sub_active,
+        "renew_options": renew_options,
+        "add_devices": add_block,
+    }
+
+
+async def _sub_page_pay_renew(
+    body: SubPagePayRenewIn,
+    request: Request,
+    kind: Literal["sbp", "card"],
+) -> dict[str, str]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), f"sub_page_renew_{kind}", max_req=20, window=300
+    )
     if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
-    billing_user_id = await _resolve_sub_page_billing_user(body.user_id)
-    desc_key, duration_str, white, device_n = _tariff_parts(body.duration)
-    price = _subpage_rub(billing_user_id, body.duration)
-    result = await pay_site(
-        val=str(price),
-        des=dct_desc.get(desc_key, f"ВПН ДЛЯ СВОИХ — {duration_str} дней"),
-        billing_user_id=billing_user_id,
-        duration=duration_str,
-        white=white,
-        device=device_n,
-        is_gift=False,
-        kind="card",
-        telegram_username=None,
-        payload_source=SUB_PAGE_PAYLOAD_SOURCE,
+    billing_uid = await _sub_page_validate_user(body.username, body.user_id)
+    _sub_page_reject_legacy(body.username)
+
+    devices = await _sub_page_devices_for_user(billing_uid, body.username)
+    tariff_id = f"m{int(body.months)}_d{devices}"
+    blocked = bot_tariff_purchase_blocked_reason(tariff_id)
+    if blocked:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, blocked)
+
+    price = subscription_price_rub(int(body.months), devices)
+    if billing_uid in ADMIN_IDS:
+        price = 1
+    duration_str = str(tariff_days_for_x3(tariff_id))
+    description = dct_desc.get(
+        tariff_id,
+        f"PRO · {body.months} мес. · {devices} устройств",
     )
-    if result["status"] == "rate_limited":
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
-        )
-    if result["status"] != "pending":
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать платёж FreeKassa (карта)")
-    return {
-        "payment_url": result.get("url") or "",
-        "payment_id": result.get("id") or "",
-    }
-
-
-@app.post("/api/v1/sub_page/pay/stars")
-async def sub_page_pay_stars(body: SubPagePayIn, request: Request, _: SubPageAuth):
-    _rate_limit_or_raise(_client_ip_for_rate_limit(request), "sub_page_stars", max_req=20, window=300)
-    _reject_sub_page_telegram_only_pay(body.user_id)
-    desc_key, duration_str, white, device_n = _tariff_parts(body.duration)
-    stars_amount = int(dct_price.get(body.duration, 0))
-    if body.user_id in ADMIN_IDS:
-        stars_amount = 1
-    gift_flag = False
-    payload = (
-        f"user_id:{body.user_id},duration:{duration_str},white:{white},gift:{gift_flag},"
-        f"method:stars,amount:{stars_amount},device:{device_n},source:{SUB_PAGE_PAYLOAD_SOURCE}"
+    return await _sub_page_fk_result(
+        billing_user_id=billing_uid,
+        price=price,
+        description=description,
+        duration_str=duration_str,
+        device_n=devices,
+        kind=kind,
     )
-    prices = [LabeledPrice(label="XTR", amount=stars_amount)]
-    title = f"Оплата подписки на {duration_str} дней."
-    description = payment_tariff_summary_pro(body.duration)
-    try:
-        await bot.send_invoice(
-            body.user_id,
-            title=title,
-            description=description,
-            prices=prices,
-            provider_token="",
-            payload=payload,
-            currency="XTR",
-            reply_markup=keyboard_payment_stars(stars_amount),
-        )
-    except Exception as e:
-        logger.error("sub_page stars send_invoice user_id={}: {}", body.user_id, e)
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "Не удалось отправить счёт в Telegram (возможно, бот заблокирован или нет диалога).",
-        )
-    bot_url = await _bot_deeplink_for_sub_page()
-    return {"bot_url": bot_url, "stars_amount": stars_amount}
 
 
-@app.post("/api/v1/sub_page/pay/cryptobot")
-async def sub_page_pay_cryptobot(body: SubPagePayIn, request: Request, _: SubPageAuth):
-    _rate_limit_or_raise(_client_ip_for_rate_limit(request), "sub_page_cryptobot", max_req=20, window=300)
-    _reject_sub_page_telegram_only_pay(body.user_id)
-    if not CRYPTOBOT_API_TOKEN:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "CryptoBot не настроен")
-    if not await payment_creation_allowed(body.user_id):
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
-        )
-    desc_key, duration_str, white, device_n = _tariff_parts(body.duration)
-    price = _subpage_rub(body.user_id, body.duration)
-    _, des = tariff_rub_and_desc(desc_key)
-    result = await create_cryptobot_payment(
-        rub_amount=price,
-        description=des,
-        user_id=body.user_id,
-        duration=duration_str,
-        white=white,
-        is_gift=False,
-        device=device_n,
-        source=SUB_PAGE_PAYLOAD_SOURCE,
+async def _sub_page_pay_add_devices(
+    body: SubPagePayAddDevicesIn,
+    request: Request,
+    kind: Literal["sbp", "card"],
+) -> dict[str, str]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), f"sub_page_add_dev_{kind}", max_req=20, window=300
     )
-    if result.get("status") == "rate_limited":
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
-        )
-    if result.get("status") != "pending":
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать счёт CryptoBot")
-    return {
-        "payment_url": result.get("url") or "",
-        "invoice_id": result.get("invoice_id"),
-    }
+    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
+    billing_uid = await _sub_page_validate_user(body.username, body.user_id)
+    _sub_page_reject_legacy(body.username)
+
+    user_obj = await sql.get_user_object_by_user_id(billing_uid)
+    if user_obj is None or not pro_subscription_end_active(user_obj.subscription_end_date):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет активной основной подписки")
+    if user_obj.subscription_end_date is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нет даты окончания подписки")
+
+    devices = await _sub_page_devices_for_user(billing_uid, body.username)
+    add_n = int(body.add_count)
+    if add_n < 1 or add_n > max_add_devices_available(devices):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нельзя добавить столько устройств")
+
+    price = add_devices_price_rub(add_n, user_obj.subscription_end_date)
+    if billing_uid in ADMIN_IDS:
+        price = 1
+    duration_str = add_devices_duration_payload(add_n)
+    return await _sub_page_fk_result(
+        billing_user_id=billing_uid,
+        price=price,
+        description=f"Доп. устройства +{add_n}",
+        duration_str=duration_str,
+        device_n=devices,
+        kind=kind,
+    )
+
+
+@app.post("/api/v1/sub_page/pay/renew/fk_sbp")
+async def sub_page_pay_renew_fk_sbp(body: SubPagePayRenewIn, request: Request, _: SubPageAuth):
+    return await _sub_page_pay_renew(body, request, "sbp")
+
+
+@app.post("/api/v1/sub_page/pay/renew/fk_card")
+async def sub_page_pay_renew_fk_card(body: SubPagePayRenewIn, request: Request, _: SubPageAuth):
+    return await _sub_page_pay_renew(body, request, "card")
+
+
+@app.post("/api/v1/sub_page/pay/add_devices/fk_sbp")
+async def sub_page_pay_add_devices_fk_sbp(
+    body: SubPagePayAddDevicesIn, request: Request, _: SubPageAuth
+):
+    return await _sub_page_pay_add_devices(body, request, "sbp")
+
+
+@app.post("/api/v1/sub_page/pay/add_devices/fk_card")
+async def sub_page_pay_add_devices_fk_card(
+    body: SubPagePayAddDevicesIn, request: Request, _: SubPageAuth
+):
+    return await _sub_page_pay_add_devices(body, request, "card")
 
 
 @app.get("/api/v1/sub_page/devices")

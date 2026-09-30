@@ -31,7 +31,8 @@ from keyboard import (
 from wl_traffic.constants import WL_TRAFFIC_BUY_CB
 from logging_config import logger
 from telegram_ids import is_telegram_chat_id
-from utils.menu_ui import CONNECT_BTN_BY_SLOT
+from lexicon import connect_vpn_btn_label
+from utils.menu_ui import main_devices_for_user
 
 router = Router()
 
@@ -49,11 +50,6 @@ BCBTN = "bcbtn:"
 BCACT = "bcact:"
 BCST = "bcst:"
 BC_CONNECT_VPN = "bc_connect_vpn"
-
-_CONNECT_LINK_BTN_BY_SLOT = {
-    **CONNECT_BTN_BY_SLOT,
-    "white": "🔗 Подключить ВПН (мобильный)",
-}
 
 LINK_STYLE_LABELS = {
     "primary": "Основной (синий)",
@@ -325,12 +321,19 @@ def _resolve_reply_markup(
 
 
 async def _user_active_connect_url_buttons(uid: int) -> list[tuple[str, str]]:
+    user = await sql.get_user_object_by_user_id(uid)
+    main_dev = main_devices_for_user(user)
     buttons: list[tuple[str, str]] = []
-    for slot, label, _uuid, username in await x3.active_subscription_slots(uid):
+    for slot, label, _uuid, username in await x3.active_subscription_slots(
+        uid, main_devices=main_dev
+    ):
         url = await x3.sublink(username)
         if not url:
             continue
-        text = _CONNECT_LINK_BTN_BY_SLOT.get(slot) or label
+        if slot in ("3", "main", "10", "white"):
+            text = connect_vpn_btn_label(slot, main_dev)
+        else:
+            text = label
         buttons.append((text, url))
     return buttons
 

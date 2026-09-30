@@ -71,6 +71,7 @@ def keyboard_start(
     connect_buttons: Optional[list[tuple[str, str]]] = None,
     show_manage: bool = False,
     buy_primary: bool = True,
+    show_trial: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for text, url in connect_buttons or []:
@@ -91,6 +92,7 @@ def keyboard_start(
                 emoji_button(
                     text="Управление подпиской",
                     callback_data="connect_vpn",
+                    icon_custom_emoji_id="5877260593903177342",
                 )
             ]
         )
@@ -98,6 +100,16 @@ def keyboard_start(
     if buy_primary:
         buy_kwargs["style"] = STYLE_PRIMARY
     rows.append([emoji_button(**buy_kwargs)])
+    if show_trial:
+        rows.append(
+            [
+                emoji_button(
+                    text="Попробовать бесплатно",
+                    callback_data="free_vpn",
+                    style=STYLE_SUCCESS,
+                )
+            ]
+        )
     rows.append(
         [
             emoji_button(
@@ -113,10 +125,15 @@ def keyboard_start(
     support_url = SUPPORT_URL or "https://t.me/"
     rows.append(
         [
-            emoji_button(text="О сервисе", callback_data=ABOUT_SERVICE_CB),
+            emoji_button(
+                text="О сервисе",
+                callback_data=ABOUT_SERVICE_CB,
+                icon_custom_emoji_id="5884510167986343350",
+            ),
             emoji_button(
                 text="Поддержка",
                 url=support_url,
+                icon_custom_emoji_id="5875465628285931233",
             ),
         ]
     )
@@ -136,11 +153,29 @@ def keyboard_push_buy_reviews() -> InlineKeyboardMarkup:
                 style=STYLE_PRIMARY,
             ),
         ],
+        [
+            emoji_button(
+                text="Попробовать бесплатно",
+                callback_data="free_vpn",
+                style=STYLE_SUCCESS,
+            ),
+        ],
     ])
 
 
-def keyboard_subscription_manage() -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
+def keyboard_subscription_manage(*, show_add_devices: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_add_devices:
+        rows.append(
+            [
+                emoji_button(
+                    text="Добавить устройство",
+                    callback_data="add_devices_start",
+                    icon_custom_emoji_id="5775937998948404844",
+                )
+            ]
+        )
+    rows.extend([
         [
             emoji_button(
                 text="📦 Купить трафик",
@@ -151,17 +186,51 @@ def keyboard_subscription_manage() -> InlineKeyboardMarkup:
             emoji_button(
                 text="Управление устройствами",
                 callback_data="manage_devices",
+                icon_custom_emoji_id="6008258140108231117",
             ),
         ],
         [
             emoji_button(
                 text="Если страница не загружается",
                 callback_data="import",
+                icon_custom_emoji_id="5996789164383669947",
             )
         ],
         [emoji_button(text=BTN_BACK, callback_data="back_to_main")],
-    ]
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def keyboard_add_devices_choices(max_add: int, billable_months: int) -> InlineKeyboardMarkup:
+    from device_addons import ADD_DEVICES_RUB_PER_DEVICE_MONTH
+
+    rows: list[list[InlineKeyboardButton]] = []
+    unit = ADD_DEVICES_RUB_PER_DEVICE_MONTH * billable_months
+    for n in range(1, min(5, max_add) + 1):
+        price = n * unit
+        rows.append(
+            [
+                emoji_button(
+                    text=f"+ {n} уст. (+{price} ₽)",
+                    callback_data=f"add_dev_pick_{n}",
+                )
+            ]
+        )
+    rows.append([emoji_button(text=BTN_BACK, callback_data="connect_vpn")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def keyboard_add_devices_payment(add_count: int, price: int) -> InlineKeyboardMarkup:
+    n = int(add_count)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [emoji_button(text="⚡ СБП", callback_data=f"add_dev_sbp_{n}")],
+            [emoji_button(text="💳 Карта РФ", callback_data=f"add_dev_card_{n}")],
+            [emoji_button(text="⭐️ Telegram Stars", callback_data=f"add_dev_stars_{n}")],
+            [emoji_button(text="💎 Crypto bot", callback_data=f"add_dev_crypto_{n}")],
+            [emoji_button(text=BTN_BACK, callback_data="add_devices_start")],
+        ]
+    )
 
 
 def keyboard_about_service() -> InlineKeyboardMarkup:
@@ -207,15 +276,11 @@ def keyboard_earn_with_us() -> InlineKeyboardMarkup:
 
 
 def keyboard_buy_device_tier(*, with_trial: bool = False):
+    """Клавиатура для push-рассылок: сразу в меню покупки."""
     return create_kb(
         1,
-        buy_tier_3="🔹 Тарифы на 3️⃣ устройства",
-        buy_tier_5="🔸 Тарифы на 5️⃣ устройств",
-        buy_tier_10="🏆 Тарифы на 🔟 устройств",
-        **{
-            WL_TRAFFIC_BUY_SUB_CB: "📦 Купить трафик",
-            "back_to_buy_menu": BTN_BACK,
-        },
+        buy_vpn="🛒 Купить подписку",
+        back_to_main=BTN_BACK,
     )
 
 
@@ -232,35 +297,102 @@ def keyboard_tariff_trial():
 
 
 def keyboard_buy_duration(devices: int) -> InlineKeyboardMarkup:
+    """Устаревший callback: 1/3 мес. для 5 устройств (конкурсы и старые кнопки)."""
+    from tariff_resolve import subscription_price_rub
+
     kwargs: dict[str, str] = {}
-    for months in (1, 3, 6, 12):
-        ck = f"r_m{months}_d{devices}"
-        dk = f"m{months}_d{devices}"
-        kwargs[ck] = dct_desc[dk]
-    if devices == 5:
-        kwargs["r_5000"] = dct_desc["5000"]
-    kwargs["back_buy_tier"] = BTN_BACK
+    for months in (1, 3):
+        price = subscription_price_rub(months, devices)
+        kwargs[f"r_m{months}_d{devices}"] = f"{'🔸' if months == 1 else '👌'} {months} мес — {price} ₽"
+    kwargs["back_to_buy_menu"] = BTN_BACK
     return create_kb(1, **kwargs)
 
 
-def keyboard_gift_device_tier():
+def keyboard_self_duration_new() -> InlineKeyboardMarkup:
+    from tariff_resolve import subscription_price_rub
+
     return create_kb(
         1,
-        gift_tier_3="🔹 Тарифы на 3️⃣ устройства",
-        gift_tier_5="🔸 Тарифы на 5️⃣ устройств",
-        gift_tier_10="🏆 Тарифы на 🔟 устройств",
+        self_dur_m1=f"1 месяц — {subscription_price_rub(1, 5)} ₽",
+        self_dur_m3=f"3 месяца — {subscription_price_rub(3, 5)} ₽",
         back_to_buy_menu=BTN_BACK,
     )
 
 
+def keyboard_self_duration_renew(devices: int) -> InlineKeyboardMarkup:
+    from tariff_resolve import subscription_price_rub
+
+    p1 = subscription_price_rub(1, devices)
+    p3 = subscription_price_rub(3, devices)
+    return create_kb(
+        1,
+        **{
+            f"r_m1_d{devices}": f"1 месяц — {p1} ₽",
+            f"r_m3_d{devices}": f"3 месяца — {p3} ₽",
+            "back_to_buy_menu": BTN_BACK,
+        },
+    )
+
+
+def keyboard_self_devices(months: int, devices: int) -> InlineKeyboardMarkup:
+    from tariff_resolve import SELF_DEVICES_MAX, SELF_DEVICES_MIN, extra_device_step_rub
+
+    rows = []
+    step = extra_device_step_rub(months)
+    if devices < SELF_DEVICES_MAX:
+        rows.append(
+            [
+                emoji_button(
+                    text=f"Добавить устройство (+{step} ₽)",
+                    callback_data=f"self_inc_m{months}_d{devices}",
+                )
+            ]
+        )
+    if devices > SELF_DEVICES_MIN:
+        rows.append(
+            [
+                emoji_button(
+                    text=f"Убрать устройство (-{step} ₽)",
+                    callback_data=f"self_dec_m{months}_d{devices}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            emoji_button(
+                text="Далее",
+                callback_data=f"self_go_pay_m{months}_d{devices}",
+            )
+        ]
+    )
+    rows.append(
+        [
+            emoji_button(
+                text=BTN_BACK,
+                callback_data="buy_vpn_self",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def keyboard_gift_device_tier():
+    return keyboard_gift_duration_new()
+
+
 def keyboard_gift_duration(devices: int) -> InlineKeyboardMarkup:
-    kwargs: dict[str, str] = {}
-    for months in (1, 3, 6, 12):
-        ck = f"gift_r_m{months}_d{devices}"
-        dk = f"m{months}_d{devices}"
-        kwargs[ck] = dct_desc[dk]
-    kwargs["gift_back_tier"] = BTN_BACK
-    return create_kb(1, **kwargs)
+    return keyboard_gift_duration_new()
+
+
+def keyboard_gift_duration_new() -> InlineKeyboardMarkup:
+    from tariff_resolve import subscription_price_rub
+
+    return create_kb(
+        1,
+        gift_r_m1_d5=f"1 месяц — {subscription_price_rub(1, 5)} ₽",
+        gift_r_m3_d5=f"3 месяца — {subscription_price_rub(3, 5)} ₽",
+        back_to_buy_menu=BTN_BACK,
+    )
 
 
 def keyboard_gift_tariff():
@@ -370,6 +502,14 @@ def keyboard_sub_after_buy(sub_url):
         ]
     )
     return keyboard
+
+
+def keyboard_trial_existing_expired() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [emoji_button(text=BTN_BACK, callback_data="back_to_main")],
+        ]
+    )
 
 
 def keyboard_sub_after_free(sub_url):
@@ -566,13 +706,8 @@ def keyboard_payment_method(tarif):
 
 
 def keyboard_promo_120_device_tier() -> InlineKeyboardMarkup:
-    """Выбор устройств для акции 4 месяца — без кнопки «Назад»."""
-    return create_kb(
-        1,
-        r_120_d3="🔹 3 устройства",
-        r_120_d5="🔸 5 устройств",
-        r_120_d10="🏆 10 устройств",
-    )
+    """Устаревшее имя: акция только на 5 устройств."""
+    return create_kb(1, r_120="🎁 Акция 3+1 (5 устройств)")
 
 
 def keyboard_payment_method_promo_120(tarif: str) -> InlineKeyboardMarkup:
@@ -668,19 +803,21 @@ def keyboard_payment_stars(stars_amount):
     )
 
 
-def ref_keyboard(user_id):
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                emoji_button(
-                    text="Пригласить друзей🫶",
-                    url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка на быстрый ВПН для своих!')}",
-                )
-            ],
-            [emoji_button(text=BTN_BACK, callback_data="back_to_earn")],
-        ]
-    )
-    return keyboard
+def ref_keyboard(user_id, *, show_qr: bool = True):
+    rows = [
+        [
+            emoji_button(
+                text="Пригласить друзей🫶",
+                url=f"https://t.me/share/url?url={BOT_URL}?start=ref{user_id}&text={urllib.parse.quote('Вот ссылка на быстрый ВПН для своих!')}",
+            )
+        ],
+    ]
+    if show_qr:
+        rows.append(
+            [emoji_button(text="Показать QR-код", callback_data="ref_show_qr")]
+        )
+    rows.append([emoji_button(text=BTN_BACK, callback_data="back_to_earn")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def keyboard_inline_ref(user_id):
@@ -762,24 +899,48 @@ def keyboard_partner_intro():
     )
 
 
-def keyboard_partner_dashboard(user_id: int):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def keyboard_partner_dashboard(
+    user_id: int,
+    *,
+    show_bot_qr: bool = True,
+    show_site_qr: bool = True,
+):
+    rows = [
+        [
+            emoji_button(
+                text="Пригласить друзей🫶",
+                url=partner_invite_share_url(user_id),
+            )
+        ],
+    ]
+    if show_bot_qr:
+        rows.append(
             [
                 emoji_button(
-                    text="Пригласить друзей🫶",
-                    url=partner_invite_share_url(user_id),
+                    text="Показать QR-код на тг-бота",
+                    callback_data="partner_qr_bot",
                 )
-            ],
+            ]
+        )
+    if show_site_qr and partner_site_link(user_id):
+        rows.append(
             [
                 emoji_button(
-                    text="💰 Создать заявку на вывод",
-                    callback_data="partner_withdraw",
+                    text="Показать QR-код на сайт",
+                    callback_data="partner_qr_site",
                 )
-            ],
-            [emoji_button(text=BTN_BACK, callback_data="back_to_earn")],
+            ]
+        )
+    rows.append(
+        [
+            emoji_button(
+                text="💰 Создать заявку на вывод",
+                callback_data="partner_withdraw",
+            )
         ]
     )
+    rows.append([emoji_button(text=BTN_BACK, callback_data="back_to_earn")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def keyboard_partner_withdraw(support_url: str):
@@ -832,6 +993,59 @@ def keyboard_contest_win_urgency_buy() -> InlineKeyboardMarkup:
     ])
 
 
+def keyboard_contest_duration_new() -> InlineKeyboardMarkup:
+    from tariff_resolve import subscription_price_rub
+
+    return create_kb(
+        1,
+        cwin_dur_m1=f"1 месяц — {subscription_price_rub(1, 5)} ₽",
+        cwin_dur_m3=f"3 месяца — {subscription_price_rub(3, 5)} ₽",
+        cwin_back_prize=BTN_BACK,
+    )
+
+
+def keyboard_contest_devices(months: int, devices: int) -> InlineKeyboardMarkup:
+    from tariff_resolve import SELF_DEVICES_MAX, SELF_DEVICES_MIN, extra_device_step_rub
+
+    rows = []
+    step = extra_device_step_rub(months)
+    if devices < SELF_DEVICES_MAX:
+        rows.append(
+            [
+                emoji_button(
+                    text=f"Добавить устройство (+{step} ₽)",
+                    callback_data=f"cwin_inc_m{months}_d{devices}",
+                )
+            ]
+        )
+    if devices > SELF_DEVICES_MIN:
+        rows.append(
+            [
+                emoji_button(
+                    text=f"Убрать устройство (-{step} ₽)",
+                    callback_data=f"cwin_dec_m{months}_d{devices}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            emoji_button(
+                text="Далее",
+                callback_data=f"cwin_go_pay_m{months}_d{devices}",
+            )
+        ]
+    )
+    rows.append(
+        [
+            emoji_button(
+                text=BTN_BACK,
+                callback_data="cwin_back_dur",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def keyboard_discount_push_reveal() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -855,12 +1069,7 @@ def keyboard_discount_push_buy() -> InlineKeyboardMarkup:
 
 
 def keyboard_discount_push_device_tier() -> InlineKeyboardMarkup:
-    return create_kb(
-        1,
-        dpush_tier_3="🔹 Тарифы на 3️⃣ устройства",
-        dpush_tier_5="🔸 Тарифы на 5️⃣ устройств",
-        dpush_tier_10="🏆 Тарифы на 🔟 устройств",
-    )
+    return keyboard_discount_push_duration(5)
 
 
 def keyboard_discount_push_duration(devices: int) -> InlineKeyboardMarkup:

@@ -31,7 +31,9 @@ from lexicon import (
     discount_payment_summary,
     discount_tariff_payment_caption,
     lexicon,
+    ru_device_phrase,
 )
+from utils.menu_ui import main_devices_for_user
 from logging_config import logger
 from payments.pay_cryptobot import create_cryptobot_payment
 from payments.pay_freekassa import pay
@@ -43,7 +45,8 @@ router = Router()
 
 _BROADCAST_USER_DELAY = 0.05
 _DISCOUNT_PAYLOAD_SUFFIX = ",discount"
-_TARIFF_KEY_RE = re.compile(r"^m(1|3|6|12)_d(3|5|10)$")
+_TARIFF_KEY_RE = re.compile(r"^m(1|3|6|12)_d5$")
+_DISCOUNT_DEVICES = 5
 
 
 def _months_from_desc_key(desc_key: str) -> int:
@@ -66,15 +69,12 @@ _REVEAL_CAPTION = (
     "Приз доступен в течение 24 ч. — воспользуйтесь скидкой до окончания срока действия."
 )
 
-_TIER_CAPTION = (
-    "У вас <b>персональная скидка 33%</b>\n"
-    "⬇️ Выберите тариф ⬇️"
-)
-
-_DURATION_CAPTION = (
-    "У вас <b>персональная скидка 33%</b>\n"
-    "⬇️ Выберите срок подписки: ⬇️"
-)
+def _duration_caption(main_devices: int) -> str:
+    return (
+        "У вас <b>персональная скидка 33%</b>\n"
+        f"Тариф: <b>{ru_device_phrase(main_devices)}</b>\n"
+        "⬇️ Выберите срок подписки: ⬇️"
+    )
 
 
 def _desc_key_from_tariff_callback(data: str, prefix: str) -> str | None:
@@ -114,50 +114,49 @@ async def discount_push_reveal(callback: CallbackQuery):
 @router.callback_query(F.data == "dpush_buy")
 async def discount_push_buy(callback: CallbackQuery):
     await callback.answer()
+    user = await sql.get_user_object_by_user_id(callback.from_user.id)
+    main_dev = main_devices_for_user(user)
     try:
-        await _edit_push_photo(callback, _TIER_CAPTION, keyboard_discount_push_device_tier())
+        await _edit_push_photo(
+            callback,
+            _duration_caption(main_dev),
+            keyboard_discount_push_duration(_DISCOUNT_DEVICES),
+        )
     except Exception as e:
         logger.warning("dpush_buy edit failed for %s: %s", callback.from_user.id, e)
 
 
-@router.callback_query(F.data.regexp(r"^dpush_tier_(3|5|10)$"))
-async def discount_push_tier_chosen(callback: CallbackQuery):
-    await callback.answer()
-    devices = int(callback.data.split("_")[-1])
-    try:
-        await _edit_push_photo(
-            callback,
-            _DURATION_CAPTION,
-            keyboard_discount_push_duration(devices),
-        )
-    except Exception as e:
-        logger.warning("dpush_tier edit failed for %s: %s", callback.from_user.id, e)
+@router.callback_query(F.data.regexp(r"^dpush_tier_(3|10)$"))
+async def discount_push_tier_legacy(callback: CallbackQuery):
+    await callback.answer(lexicon["tariff_legacy_slots"], show_alert=True)
+
+
+@router.callback_query(F.data == "dpush_tier_5")
+async def discount_push_tier_5_legacy(callback: CallbackQuery):
+    await discount_push_buy(callback)
 
 
 @router.callback_query(F.data == "dpush_back_tier")
 async def discount_push_back_tier(callback: CallbackQuery):
-    await callback.answer()
-    try:
-        await _edit_push_photo(callback, _TIER_CAPTION, keyboard_discount_push_device_tier())
-    except Exception as e:
-        logger.warning("dpush_back_tier edit failed for %s: %s", callback.from_user.id, e)
+    await discount_push_buy(callback)
 
 
 @router.callback_query(F.data.regexp(r"^dpush_back_dur_(3|5|10)$"))
 async def discount_push_back_duration(callback: CallbackQuery):
     await callback.answer()
-    devices = int(callback.data.split("_")[-1])
+    user = await sql.get_user_object_by_user_id(callback.from_user.id)
+    main_dev = main_devices_for_user(user)
     try:
         await _edit_push_photo(
             callback,
-            _DURATION_CAPTION,
-            keyboard_discount_push_duration(devices),
+            _duration_caption(main_dev),
+            keyboard_discount_push_duration(_DISCOUNT_DEVICES),
         )
     except Exception as e:
         logger.warning("dpush_back_dur edit failed for %s: %s", callback.from_user.id, e)
 
 
-@router.callback_query(F.data.regexp(r"^dpush_tariff_m(1|3|6|12)_d(3|5|10)$"))
+@router.callback_query(F.data.regexp(r"^dpush_tariff_m(1|3|6|12)_d5$"))
 async def discount_push_select_tariff(callback: CallbackQuery):
     desc_key = (callback.data or "")[len("dpush_tariff_"):]
     if not _TARIFF_KEY_RE.fullmatch(desc_key):
@@ -234,7 +233,7 @@ async def _create_discount_fk_payment(
         )
 
 
-@router.callback_query(F.data.regexp(r"^dpush_fk_sbp_m(1|3|6|12)_d(3|5|10)$"))
+@router.callback_query(F.data.regexp(r"^dpush_fk_sbp_m(1|3|6|12)_d5$"))
 async def discount_push_pay_sbp(callback: CallbackQuery):
     desc_key = _desc_key_from_tariff_callback(callback.data or "", "dpush_fk_sbp_")
     if not desc_key:
@@ -244,7 +243,7 @@ async def discount_push_pay_sbp(callback: CallbackQuery):
     await _create_discount_fk_payment(callback, desc_key, "sbp")
 
 
-@router.callback_query(F.data.regexp(r"^dpush_fk_card_m(1|3|6|12)_d(3|5|10)$"))
+@router.callback_query(F.data.regexp(r"^dpush_fk_card_m(1|3|6|12)_d5$"))
 async def discount_push_pay_card(callback: CallbackQuery):
     desc_key = _desc_key_from_tariff_callback(callback.data or "", "dpush_fk_card_")
     if not desc_key:
@@ -254,7 +253,7 @@ async def discount_push_pay_card(callback: CallbackQuery):
     await _create_discount_fk_payment(callback, desc_key, "card")
 
 
-@router.callback_query(F.data.regexp(r"^dpush_crypto_m(1|3|6|12)_d(3|5|10)$"))
+@router.callback_query(F.data.regexp(r"^dpush_crypto_m(1|3|6|12)_d5$"))
 async def discount_push_pay_crypto(callback: CallbackQuery):
     desc_key = _desc_key_from_tariff_callback(callback.data or "", "dpush_crypto_")
     if not desc_key:
@@ -304,7 +303,7 @@ async def discount_push_pay_crypto(callback: CallbackQuery):
         )
 
 
-@router.callback_query(F.data.regexp(r"^dpush_stars_m(1|3|6|12)_d(3|5|10)$"))
+@router.callback_query(F.data.regexp(r"^dpush_stars_m(1|3|6|12)_d5$"))
 async def discount_push_pay_stars(callback: CallbackQuery):
     desc_key = _desc_key_from_tariff_callback(callback.data or "", "dpush_stars_")
     if not desc_key:

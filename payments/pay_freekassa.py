@@ -14,7 +14,12 @@ from lexicon import lexicon, payment_tariff_summary_pro
 from utils.menu_ui import edit_or_send_photo
 from payments.payment_limits import payment_creation_allowed
 from payments.payload_source import SITE
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
+from tariff_resolve import (
+    tariff_days_for_x3,
+    tariff_rub_and_desc,
+    device_from_tariff_key,
+    bot_tariff_purchase_blocked_reason,
+)
 from logging_config import logger
 
 router = Router()
@@ -336,13 +341,18 @@ def _duration_from_callback(data: str, prefix: str, gift_prefix: str) -> tuple[s
 
 
 async def _handle_fk_payment_callback(callback: CallbackQuery, ui_kind: UiKind) -> None:
-    await callback.answer()
     data = callback.data or ""
     channel = "fk" if data.startswith("fk_") else "wata"
     kind = "sbp" if ui_kind == "sbp" else "card"
     prefix = f"{channel}_{kind}_r_"
     gift_prefix = f"{channel}_{kind}_gift_r_"
     duration, gift_flag = _duration_from_callback(data, prefix, gift_prefix)
+    duration_plain = duration.replace("white_", "", 1) if "white" in duration else duration
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+    await callback.answer()
     desc_key = duration
     rub_amount, des_text = tariff_rub_and_desc(desc_key)
     if callback.from_user.id in ADMIN_IDS:

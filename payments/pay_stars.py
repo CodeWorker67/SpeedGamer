@@ -7,7 +7,12 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, LabeledPrice, PreCheckoutQuery, Message
 from lexicon import dct_price, lexicon, payment_tariff_summary_pro
 from payments.process_payload import process_confirmed_payment
-from tariff_resolve import tariff_days_for_x3, device_from_tariff_key
+from tariff_resolve import (
+    tariff_days_for_x3,
+    device_from_tariff_key,
+    tariff_rub_and_desc,
+    bot_tariff_purchase_blocked_reason,
+)
 
 
 router: Router = Router()
@@ -28,7 +33,15 @@ async def process_payment_stars(callback: CallbackQuery):
     else:
         duration_plain = duration_key
 
-    stars_amount = int(dct_price.get(duration_key, 0))
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+
+    try:
+        stars_amount, _ = tariff_rub_and_desc(duration_plain)
+    except KeyError:
+        stars_amount = int(dct_price.get(duration_key, 0))
     if callback.from_user.id in ADMIN_IDS:
         stars_amount = 1
     user_id = str(callback.from_user.id)
@@ -47,6 +60,7 @@ async def process_payment_stars(callback: CallbackQuery):
         description = lexicon['payment_link_white']
     else:
         description = payment_tariff_summary_pro(duration_key)
+    await callback.answer()
     await bot.send_invoice(
         callback.from_user.id,
         title=title,

@@ -8,7 +8,12 @@ from config import CRYPTOBOT_API_TOKEN, ADMIN_IDS, BOT_URL
 from keyboard import create_kb, emoji_button
 from lexicon import lexicon, payment_tariff_summary_pro
 from utils.menu_ui import edit_or_send_photo
-from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc, device_from_tariff_key
+from tariff_resolve import (
+    tariff_days_for_x3,
+    tariff_rub_and_desc,
+    device_from_tariff_key,
+    bot_tariff_purchase_blocked_reason,
+)
 from logging_config import logger
 
 router: Router = Router()
@@ -132,7 +137,6 @@ async def create_cryptobot_payment(rub_amount: int, description: str,
 
 @router.callback_query(F.data.startswith('crypto_'))
 async def process_payment_crypto(callback: CallbackQuery):
-    await callback.answer()
     gift_flag = False
     white_flag = False
     data = callback.data
@@ -146,14 +150,20 @@ async def process_payment_crypto(callback: CallbackQuery):
     else:
         duration_key = data.replace('crypto_r_', '')
 
-    rub_amount, des_text = tariff_rub_and_desc(duration_key)
-
     if 'white' in duration_key:
         white_flag = True
         duration_plain = duration_key.replace('white_', '', 1)
     else:
         white_flag = False
         duration_plain = duration_key
+
+    blocked = bot_tariff_purchase_blocked_reason(duration_plain)
+    if blocked:
+        await callback.answer(blocked, show_alert=True)
+        return
+    await callback.answer()
+
+    rub_amount, des_text = tariff_rub_and_desc(duration_key)
 
     if callback.from_user.id in ADMIN_IDS:
         rub_amount = 1
