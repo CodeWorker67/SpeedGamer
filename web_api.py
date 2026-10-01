@@ -1807,13 +1807,20 @@ async def gift_activate_web(gift_id: str):
 # ── Sub page payments ───────────────────────────────────────────────
 
 async def _sub_page_devices_for_user(billing_uid: int, panel_username: str) -> int:
+    """Лимит для тарифа: max(users.devices в БД, лимит в панели по username подписки)."""
     user_obj = await sql.get_user_object_by_user_id(billing_uid)
-    return await current_main_device_limit(
+    from_db = (
+        effective_user_devices(getattr(user_obj, "devices", None))
+        if user_obj is not None
+        else SELF_DEVICES_MIN
+    )
+    from_panel = await current_main_device_limit(
         x3,
         billing_uid,
         user_obj,
         panel_username=panel_username.strip(),
     )
+    return max(from_db, from_panel)
 
 
 async def _sub_page_fk_result(
@@ -1882,9 +1889,6 @@ async def sub_page_payment_options(
     panel_user = await _sub_page_panel_user(username)
     subscription_active = x3._panel_user_is_active(panel_user)
     devices = await _sub_page_devices_for_user(billing_uid, username)
-    hw = _hwid_device_limit(panel_user)
-    if hw is not None:
-        devices = hw
 
     renew_options: list[dict[str, Any]] = []
     for months in _SITE_SUBSCRIPTION_MONTHS_ORDER:

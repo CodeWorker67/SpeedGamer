@@ -1,21 +1,15 @@
 /**
- * Замена для: remnawave/subscription-page → frontend/src/pages/main/ui/components/main.page.component.tsx
+ * Замена для: remnawave/subscription-page → frontend/src/pages/main.page.component.tsx
+ * (или src/pages/main/ui/components/main.page.component.tsx — тот же файл по смыслу).
  *
- * URL и ключ берутся из переменных Vite (префикс VITE_) — их задают при СБОРКЕ фронта.
+ * API (заголовок X-Sub-Page-Api-Key = SUB_PAGE_API_KEY из .env бота):
+ *   GET  /api/v1/sub_page/payment-options?username=&user_id=
+ *   POST /api/v1/sub_page/pay/renew/fk_sbp|fk_card     { user_id, username, months: 1|3 }
+ *   POST /api/v1/sub_page/pay/add_devices/fk_sbp|fk_card { user_id, username, add_count }
  *
- * 1) В /opt/remnawave/.env.sub добавьте (без кавычек, без пробелов вокруг =):
- *    VITE_SUB_PAGE_PAY_API_BASE=http://btg.speedgamer.top
- *    VITE_SUB_PAGE_PAY_API_KEY=<тот же SUB_PAGE_API_KEY, что в .env бота>
+ * Legacy username (*_3, *_10): блоки оплаты и «Добавить устройство» не показываются.
  *
- *    Если VITE_SUB_PAGE_PAY_API_BASE не задан, по умолчанию используется http://btg.speedgamer.top
- *
- * 2) Сборка frontend (подставьте путь к клону subscription-page):
- *    docker run --rm -it --env-file /opt/remnawave/.env.sub \
- *      -v /opt/subscription-page/frontend:/work -w /work \
- *      -e NODE_OPTIONS=--max-old-space-size=4096 \
- *      node:24-bookworm-slim bash -lc "npm ci && npm run start:build"
- *
- * 3) docker build образа subscription-page и compose up, как раньше.
+ * VITE_SUB_PAGE_PAY_API_BASE, VITE_SUB_PAGE_PAY_API_KEY — при сборке фронта.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -27,6 +21,7 @@ import {
     Container,
     Group,
     Image,
+    Loader,
     Modal,
     SimpleGrid,
     Stack,
@@ -34,6 +29,7 @@ import {
     Title,
     UnstyledButton
 } from '@mantine/core'
+import { IconTrash } from '@tabler/icons-react'
 import { TSubscriptionPagePlatformKey } from '@remnawave/subscription-page-types'
 
 import {
@@ -52,15 +48,14 @@ import { useAppConfig, useAppConfigStoreActions, useCurrentLang } from '@entitie
 import { useSubscription } from '@entities/subscription-info-store'
 import { LanguagePicker } from '@shared/ui/language-picker/language-picker.shared'
 import { Page, RemnawaveLogo } from '@shared/ui'
-
-const DEFAULT_PAY_API_BASE = 'http://btg.speedgamer.top'
-
-function subPagePayFromBuild(): { apiBase: string; apiKey: string } {
-    return {
-        apiBase: String(import.meta.env.VITE_SUB_PAGE_PAY_API_BASE ?? DEFAULT_PAY_API_BASE).trim(),
-        apiKey: String(import.meta.env.VITE_SUB_PAGE_PAY_API_KEY ?? '').trim()
-    }
-}
+import {
+    deleteSubPageDevice,
+    fetchSubPageDevices,
+    parseAppNameFromUserAgent,
+    parseSubPageUserId,
+    subPageBotApiConfig,
+    SubPageDevicesInfo
+} from '@shared/utils/sub-page-bot-api'
 
 type PayMethodId = 'fk_sbp' | 'fk_card'
 
@@ -76,24 +71,16 @@ type RenewOption = {
     tariff_id: string
 }
 
-type AddDeviceOption = {
-    add_count: number
-    price_rub: number
-}
-
 type PaymentOptions = {
     legacy_slot: boolean
-    payment_allowed: boolean
-    message?: string
     devices: number | null
     subscription_active: boolean
-    main_subscription_active: boolean
     renew_options: RenewOption[]
     add_devices: {
         current_devices: number
         max_add: number
         billable_months: number
-        options: AddDeviceOption[]
+        options: { add_count: number; price_rub: number }[]
     } | null
 }
 
@@ -101,25 +88,11 @@ type PayIntent =
     | { kind: 'renew'; months: number }
     | { kind: 'add_devices'; add_count: number }
 
-/**
- * user_id из username страницы подписки.
- * Telegram: 123456789. Сайт: -1833 или n-2 (короткие отрицательные id).
- * Снимаются суффиксы _white, затем _10, затем _3.
- */
-function parseSubPageUserId(username: string): number | null {
-    let base = username.trim()
-    if (base.endsWith('_white')) base = base.slice(0, -'_white'.length)
-    if (base.endsWith('_10')) base = base.slice(0, -'_10'.length)
-    if (base.endsWith('_3')) base = base.slice(0, -'_3'.length)
-    const numeric = (s: string): number | null => {
-        if (!/^-?\d+$/.test(s)) return null
-        const n = Number.parseInt(s, 10)
-        return Number.isFinite(n) ? n : null
-    }
-    const direct = numeric(base)
-    if (direct != null) return direct
-    if (base.startsWith('n')) return numeric(base.slice(1))
-    return null
+/** Legacy-слоты 3/10 устройств — без оплаты на странице подписки. */
+function isLegacySubscriptionUsername(username: string): boolean {
+    let u = username.trim()
+    if (u.endsWith('_white')) u = u.slice(0, -'_white'.length)
+    return u.endsWith('_3') || u.endsWith('_10')
 }
 
 function devicesLabel(n: number): string {
@@ -133,63 +106,76 @@ function devicesLabel(n: number): string {
 
 function renewLabel(opt: RenewOption): string {
     const m = opt.months === 1 ? '1 месяц' : `${opt.months} месяца`
-    return `${m} — ${opt.price_rub} ₽ (${devicesLabel(opt.devices)})`
+    return `${m} — ${opt.price_rub} ₽`
 }
 
-function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
+function SubscriptionBillingSection({ isMobile }: { isMobile: boolean }) {
     const { user } = useSubscription()
     const userId = useMemo(() => parseSubPageUserId(user.username), [user.username])
-    const payCfg = useMemo(() => subPagePayFromBuild(), [])
+    const payCfg = useMemo(() => subPageBotApiConfig(), [])
 
     const [options, setOptions] = useState<PaymentOptions | null>(null)
     const [optionsError, setOptionsError] = useState<string | null>(null)
     const [loadingOptions, setLoadingOptions] = useState(false)
 
-    const [payExpanded, setPayExpanded] = useState(true)
+    const [renewExpanded, setRenewExpanded] = useState(true)
     const [addExpanded, setAddExpanded] = useState(false)
     const [modalOpen, setModalOpen] = useState(false)
     const [intent, setIntent] = useState<PayIntent | null>(null)
     const [busyMethod, setBusyMethod] = useState<PayMethodId | null>(null)
     const [errorText, setErrorText] = useState<string | null>(null)
 
-    const loadOptions = useCallback(async () => {
-        if (userId == null || !payCfg.apiKey) return
-        setLoadingOptions(true)
-        setOptionsError(null)
-        const qs = new URLSearchParams({
-            username: user.username,
-            user_id: String(userId)
-        })
-        const url = `${payCfg.apiBase.replace(/\/$/, '')}/api/v1/sub_page/payment-options?${qs}`
-        try {
-            const res = await fetch(url, {
-                headers: { 'X-Sub-Page-Api-Key': payCfg.apiKey }
-            })
-            const data: unknown = await res.json().catch(() => ({}))
-            if (!res.ok) {
-                const msg =
-                    typeof data === 'object' &&
-                    data !== null &&
-                    'detail' in data &&
-                    typeof (data as { detail?: unknown }).detail === 'string'
-                        ? (data as { detail: string }).detail
-                        : `Ошибка ${res.status}`
-                setOptionsError(msg)
-                setOptions(null)
-                return
-            }
-            setOptions(data as PaymentOptions)
-        } catch {
-            setOptionsError('Не удалось загрузить тарифы')
-            setOptions(null)
-        } finally {
-            setLoadingOptions(false)
-        }
-    }, [payCfg.apiBase, payCfg.apiKey, user.username, userId])
+    const legacySlot = isLegacySubscriptionUsername(user.username)
 
     useEffect(() => {
-        void loadOptions()
-    }, [loadOptions])
+        if (legacySlot || userId == null || !payCfg.apiKey) return
+        let cancelled = false
+        const load = async () => {
+            setLoadingOptions(true)
+            setOptionsError(null)
+            const qs = new URLSearchParams({
+                username: user.username,
+                user_id: String(userId)
+            })
+            const url = `${payCfg.apiBase.replace(/\/$/, '')}/api/v1/sub_page/payment-options?${qs}`
+            try {
+                const res = await fetch(url, {
+                    headers: { 'X-Sub-Page-Api-Key': payCfg.apiKey }
+                })
+                const data: unknown = await res.json().catch(() => ({}))
+                if (cancelled) return
+                if (!res.ok) {
+                    const msg =
+                        typeof data === 'object' &&
+                        data !== null &&
+                        'detail' in data &&
+                        typeof (data as { detail?: unknown }).detail === 'string'
+                            ? (data as { detail: string }).detail
+                            : `Ошибка ${res.status}`
+                    setOptionsError(msg)
+                    setOptions(null)
+                    return
+                }
+                const parsed = data as PaymentOptions
+                if (parsed.legacy_slot) {
+                    setOptions(null)
+                    return
+                }
+                setOptions(parsed)
+            } catch {
+                if (!cancelled) {
+                    setOptionsError('Не удалось загрузить тарифы')
+                    setOptions(null)
+                }
+            } finally {
+                if (!cancelled) setLoadingOptions(false)
+            }
+        }
+        void load()
+        return () => {
+            cancelled = true
+        }
+    }, [legacySlot, payCfg.apiBase, payCfg.apiKey, user.username, userId])
 
     const openPay = useCallback((next: PayIntent) => {
         setErrorText(null)
@@ -244,7 +230,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                     return
                 }
                 const obj = data as { payment_url?: string }
-                if (obj.payment_url && typeof obj.payment_url === 'string') {
+                if (obj.payment_url) {
                     window.location.assign(obj.payment_url)
                     return
                 }
@@ -258,33 +244,16 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         [intent, payCfg.apiBase, payCfg.apiKey, user.username, userId]
     )
 
-    if (!payCfg.apiKey) {
-        return (
-            <Card p="md" radius="lg" withBorder>
-                <Text c="dimmed" size="sm">
-                    Оплата: не задан VITE_SUB_PAGE_PAY_API_KEY при сборке фронта. Добавьте его в .env.sub и
-                    пересоберите образ (см. комментарий в начале main.page.component.tsx).
-                </Text>
-            </Card>
-        )
-    }
-
-    if (userId == null) {
-        return (
-            <Card p="md" radius="lg" withBorder>
-                <Text c="dimmed" size="sm">
-                    Оплата: не удалось определить user_id из имени пользователя подписки.
-                </Text>
-            </Card>
-        )
+    if (legacySlot || !payCfg.apiKey || userId == null) {
+        return null
     }
 
     if (loadingOptions && !options) {
         return (
             <Card p="md" radius="lg" withBorder>
-                <Text c="dimmed" size="sm">
-                    Загрузка тарифов…
-                </Text>
+                <Center py="sm">
+                    <Loader size="sm" />
+                </Center>
             </Card>
         )
     }
@@ -299,17 +268,8 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         )
     }
 
-    if (!options) return null
-
-    if (options.legacy_slot) {
-        return (
-            <Card p="md" radius="lg" withBorder>
-                <Text c="dimmed" size="sm">
-                    {options.message ||
-                        'Эта подписка (3 или 10 устройств, старый формат) не продлевается здесь. Оформите новую в боте или на сайте.'}
-                </Text>
-            </Card>
-        )
+    if (!options) {
+        return null
     }
 
     const devices = options.devices ?? 5
@@ -322,7 +282,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
         <>
             <Card p="md" radius="lg" withBorder>
                 <Stack gap="md">
-                    <UnstyledButton onClick={() => setPayExpanded((v) => !v)} w="100%">
+                    <UnstyledButton onClick={() => setRenewExpanded((v) => !v)} w="100%">
                         <Group gap="sm" justify="space-between" wrap="nowrap">
                             <Title c="white" order={5} style={{ flex: 1, textAlign: 'left' }}>
                                 Продление подписки · {devicesLabel(devices)}
@@ -334,7 +294,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                                     flexShrink: 0,
                                     fontSize: 12,
                                     lineHeight: 1,
-                                    transform: payExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                    transform: renewExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
                                     transition: 'transform 200ms ease'
                                 }}
                             >
@@ -342,7 +302,7 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                             </Box>
                         </Group>
                     </UnstyledButton>
-                    <Collapse in={payExpanded}>
+                    <Collapse expanded={renewExpanded}>
                         <Stack gap="sm">
                             {options.renew_options.map((row) => (
                                 <Button
@@ -388,10 +348,10 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                             </Group>
                         </UnstyledButton>
                         <Text c="dimmed" size="xs">
-                            Сейчас {devicesLabel(options.add_devices!.current_devices)}. Доплата до конца
-                            подписки (~{options.add_devices!.billable_months} мес.).
+                            Сейчас {devicesLabel(options.add_devices!.current_devices)}. Доплата до
+                            конца подписки (~{options.add_devices!.billable_months} мес.).
                         </Text>
-                        <Collapse in={addExpanded}>
+                        <Collapse expanded={addExpanded}>
                             <Stack gap="sm">
                                 {options.add_devices!.options.map((row) => (
                                     <Button
@@ -447,6 +407,126 @@ function SubscriptionPayBlock({ isMobile }: { isMobile: boolean }) {
                 </Stack>
             </Modal>
         </>
+    )
+}
+
+function SubscriptionDevicesBlock({ isMobile: _isMobile }: { isMobile: boolean }) {
+    const { user } = useSubscription()
+    const botApiCfg = useMemo(() => subPageBotApiConfig(), [])
+    const [devicesExpanded, setDevicesExpanded] = useState(false)
+    const [devicesInfo, setDevicesInfo] = useState<SubPageDevicesInfo | null>(null)
+    const [loading, setLoading] = useState(false)
+    const [deletingHwid, setDeletingHwid] = useState<string | null>(null)
+
+    const loadDevices = useCallback(async () => {
+        setLoading(true)
+        const info = await fetchSubPageDevices(botApiCfg, user.username)
+        setDevicesInfo(info)
+        setLoading(false)
+    }, [botApiCfg, user.username])
+
+    const toggleDevices = useCallback(() => {
+        setDevicesExpanded((v) => {
+            const next = !v
+            if (next && devicesInfo == null && !loading) {
+                void loadDevices()
+            }
+            return next
+        })
+    }, [devicesInfo, loading, loadDevices])
+
+    const handleDelete = useCallback(
+        async (hwid: string) => {
+            setDeletingHwid(hwid)
+            const ok = await deleteSubPageDevice(botApiCfg, user.username, hwid)
+            if (ok) {
+                setDevicesInfo((prev) =>
+                    prev
+                        ? {
+                              ...prev,
+                              devices: prev.devices.filter((d) => d.hwid !== hwid),
+                              total: prev.total - 1
+                          }
+                        : prev
+                )
+            }
+            setDeletingHwid(null)
+        },
+        [botApiCfg, user.username]
+    )
+
+    if (!botApiCfg.apiKey) {
+        return null
+    }
+
+    return (
+        <Card p="md" radius="lg" withBorder>
+            <Stack gap="md">
+                <UnstyledButton onClick={toggleDevices} w="100%">
+                    <Group gap="sm" justify="space-between" wrap="nowrap">
+                        <Title c="white" order={5} style={{ flex: 1, textAlign: 'left' }}>
+                            Устройства
+                            {devicesInfo
+                                ? ` (${devicesInfo.total}${devicesInfo.limit ? `/${devicesInfo.limit}` : ''})`
+                                : ''}
+                        </Title>
+                        <Box
+                            aria-hidden
+                            c="dimmed"
+                            style={{
+                                flexShrink: 0,
+                                fontSize: 12,
+                                lineHeight: 1,
+                                transform: devicesExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                transition: 'transform 200ms ease'
+                            }}
+                        >
+                            ▼
+                        </Box>
+                    </Group>
+                </UnstyledButton>
+                <Collapse expanded={devicesExpanded}>
+                    {loading && (
+                        <Center py="md">
+                            <Loader size="sm" />
+                        </Center>
+                    )}
+                    {!loading && devicesInfo && devicesInfo.devices.length === 0 && (
+                        <Text c="dimmed" size="sm">
+                            Нет подключённых устройств
+                        </Text>
+                    )}
+                    {!loading && devicesInfo && devicesInfo.devices.length > 0 && (
+                        <Stack gap="xs">
+                            {devicesInfo.devices.map((d) => (
+                                <Group justify="space-between" key={d.hwid} wrap="nowrap">
+                                    <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
+                                        <Text c="white" fw={500} size="sm" truncate>
+                                            {d.deviceModel || d.platform || 'Неизвестное устройство'}
+                                        </Text>
+                                        <Text c="dimmed" size="xs" truncate>
+                                            {[d.platform, d.osVersion, parseAppNameFromUserAgent(d.userAgent)]
+                                                .filter(Boolean)
+                                                .join(' · ') || d.hwid}
+                                        </Text>
+                                    </Stack>
+                                    <Button
+                                        color="red"
+                                        loading={deletingHwid === d.hwid}
+                                        onClick={() => void handleDelete(d.hwid)}
+                                        radius="md"
+                                        size="xs"
+                                        variant="light"
+                                    >
+                                        <IconTrash size={14} />
+                                    </Button>
+                                </Group>
+                            ))}
+                        </Stack>
+                    )}
+                </Collapse>
+            </Stack>
+        </Card>
     )
 }
 
@@ -547,7 +627,9 @@ export const MainPageComponent = ({ isMobile, platform }: IMainPageComponentProp
                         <SubscriptionInfoBlockRenderer isMobile={isMobile} />
                     )}
 
-                    <SubscriptionPayBlock isMobile={isMobile} />
+                    <SubscriptionBillingSection isMobile={isMobile} />
+
+                    <SubscriptionDevicesBlock isMobile={isMobile} />
 
                     {atLeastOnePlatformApp && (
                         <InstallationGuideConnector
