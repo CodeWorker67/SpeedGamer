@@ -694,6 +694,26 @@ def _sub_page_reject_legacy(username: str) -> None:
         )
 
 
+def _reject_sub_page_telegram_only_pay(user_id: int) -> None:
+    if user_id <= 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Для пользователей сайта доступна оплата только СБП и картой.",
+        )
+
+
+async def _bot_deeplink_for_sub_page() -> str:
+    if BOT_URL and str(BOT_URL).strip():
+        return str(BOT_URL).rstrip("/")
+    try:
+        me = await bot.get_me()
+        if me.username:
+            return f"https://t.me/{me.username}"
+    except Exception as e:
+        logger.warning("sub_page pay: bot.get_me failed: {}", e)
+    return "https://t.me/"
+
+
 _STAMP_RE = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
 
 
@@ -1940,16 +1960,10 @@ async def sub_page_payment_options(
     }
 
 
-async def _sub_page_pay_renew(
+async def _sub_page_renew_quote(
     body: SubPagePayRenewIn,
-    request: Request,
-    kind: Literal["sbp", "card"],
-) -> dict[str, str]:
-    _rate_limit_or_raise(
-        _client_ip_for_rate_limit(request), f"sub_page_renew_{kind}", max_req=20, window=300
-    )
-    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
+) -> tuple[int, int, str, str, int, str]:
+    """billing_uid, price_rub, duration_str, description, devices, tariff_id."""
     billing_uid = await _sub_page_validate_user(body.username, body.user_id)
     _sub_page_reject_legacy(body.username)
 
@@ -1967,6 +1981,22 @@ async def _sub_page_pay_renew(
         tariff_id,
         f"PRO · {body.months} мес. · {devices} устройств",
     )
+    return billing_uid, price, duration_str, description, devices, tariff_id
+
+
+async def _sub_page_pay_renew(
+    body: SubPagePayRenewIn,
+    request: Request,
+    kind: Literal["sbp", "card"],
+) -> dict[str, str]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), f"sub_page_renew_{kind}", max_req=20, window=300
+    )
+    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
+    billing_uid, price, duration_str, description, devices, _tariff_id = await _sub_page_renew_quote(
+        body
+    )
     return await _sub_page_fk_result(
         billing_user_id=billing_uid,
         price=price,
@@ -1977,16 +2007,85 @@ async def _sub_page_pay_renew(
     )
 
 
-async def _sub_page_pay_add_devices(
-    body: SubPagePayAddDevicesIn,
+async def _sub_page_pay_renew_stars(
+    body: SubPagePayRenewIn,
     request: Request,
-    kind: Literal["sbp", "card"],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     _rate_limit_or_raise(
-        _client_ip_for_rate_limit(request), f"sub_page_add_dev_{kind}", max_req=20, window=300
+        _client_ip_for_rate_limit(request), "sub_page_renew_stars", max_req=20, window=300
     )
-    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
+    _reject_sub_page_telegram_only_pay(body.user_id)
+    billing_uid, price, duration_str, _description, devices, tariff_id = await _sub_page_renew_quote(
+        body
+    )
+    stars_amount = int(price)
+    payload = (
+        f"user_id:{billing_uid},duration:{duration_str},white:False,gift:False,"
+        f"method:stars,amount:{stars_amount},device:{devices},source:{SUB_PAGE_PAYLOAD_SOURCE}"
+    )
+    title = f"Оплата подписки на {duration_str} дней."
+    description = payment_tariff_summary_pro(tariff_id)
+    try:
+        await bot.send_invoice(
+            body.user_id,
+            title=title,
+            description=description,
+            prices=[LabeledPrice(label="XTR", amount=stars_amount)],
+            provider_token="",
+            payload=payload,
+            currency="XTR",
+            reply_markup=keyboard_payment_stars(stars_amount),
+        )
+    except Exception as e:
+        logger.error("sub_page renew stars send_invoice user_id={}: {}", body.user_id, e)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Не удалось отправить счёт в Telegram (возможно, бот заблокирован или нет диалога).",
+        )
+    bot_url = await _bot_deeplink_for_sub_page()
+    return {"bot_url": bot_url, "stars_amount": stars_amount}
+
+
+async def _sub_page_pay_renew_cryptobot(
+    body: SubPagePayRenewIn,
+    request: Request,
+) -> dict[str, Any]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), "sub_page_renew_cryptobot", max_req=20, window=300
+    )
+    _reject_sub_page_telegram_only_pay(body.user_id)
+    if not CRYPTOBOT_API_TOKEN:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "CryptoBot не настроен")
+    billing_uid, price, duration_str, description, devices, _tariff_id = await _sub_page_renew_quote(
+        body
+    )
+    result = await create_cryptobot_payment(
+        rub_amount=price,
+        description=description,
+        user_id=billing_uid,
+        duration=duration_str,
+        white=False,
+        is_gift=False,
+        device=devices,
+        source=SUB_PAGE_PAYLOAD_SOURCE,
+    )
+    if result.get("status") == "rate_limited":
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
+        )
+    if result.get("status") != "pending":
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать счёт CryptoBot")
+    return {
+        "payment_url": result.get("url") or "",
+        "invoice_id": result.get("invoice_id"),
+    }
+
+
+async def _sub_page_add_devices_quote(
+    body: SubPagePayAddDevicesIn,
+) -> tuple[int, int, str, int, int]:
+    """billing_uid, price_rub, duration_str, devices, add_n."""
     billing_uid = await _sub_page_validate_user(body.username, body.user_id)
     _sub_page_reject_legacy(body.username)
 
@@ -2005,6 +2104,20 @@ async def _sub_page_pay_add_devices(
     if billing_uid in ADMIN_IDS:
         price = 1
     duration_str = add_devices_duration_payload(add_n)
+    return billing_uid, price, duration_str, devices, add_n
+
+
+async def _sub_page_pay_add_devices(
+    body: SubPagePayAddDevicesIn,
+    request: Request,
+    kind: Literal["sbp", "card"],
+) -> dict[str, str]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), f"sub_page_add_dev_{kind}", max_req=20, window=300
+    )
+    if not API_FREEKASSA or SHOP_ID_FREEKASSA is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "FreeKassa не настроена")
+    billing_uid, price, duration_str, devices, add_n = await _sub_page_add_devices_quote(body)
     return await _sub_page_fk_result(
         billing_user_id=billing_uid,
         price=price,
@@ -2013,6 +2126,75 @@ async def _sub_page_pay_add_devices(
         device_n=devices,
         kind=kind,
     )
+
+
+async def _sub_page_pay_add_devices_stars(
+    body: SubPagePayAddDevicesIn,
+    request: Request,
+) -> dict[str, Any]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), "sub_page_add_dev_stars", max_req=20, window=300
+    )
+    _reject_sub_page_telegram_only_pay(body.user_id)
+    billing_uid, price, duration_str, devices, add_n = await _sub_page_add_devices_quote(body)
+    stars_amount = int(price)
+    payload = (
+        f"user_id:{billing_uid},duration:{duration_str},white:False,gift:False,"
+        f"method:stars,amount:{stars_amount},device:{devices},source:{SUB_PAGE_PAYLOAD_SOURCE}"
+    )
+    try:
+        await bot.send_invoice(
+            body.user_id,
+            title=f"Доп. устройства +{add_n}",
+            description=lexicon["add_devices_stars_desc"].format(n=add_n, price=stars_amount),
+            prices=[LabeledPrice(label="XTR", amount=stars_amount)],
+            provider_token="",
+            payload=payload,
+            currency="XTR",
+            reply_markup=keyboard_payment_stars(stars_amount),
+        )
+    except Exception as e:
+        logger.error("sub_page add_devices stars send_invoice user_id={}: {}", body.user_id, e)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Не удалось отправить счёт в Telegram (возможно, бот заблокирован или нет диалога).",
+        )
+    bot_url = await _bot_deeplink_for_sub_page()
+    return {"bot_url": bot_url, "stars_amount": stars_amount}
+
+
+async def _sub_page_pay_add_devices_cryptobot(
+    body: SubPagePayAddDevicesIn,
+    request: Request,
+) -> dict[str, Any]:
+    _rate_limit_or_raise(
+        _client_ip_for_rate_limit(request), "sub_page_add_dev_cryptobot", max_req=20, window=300
+    )
+    _reject_sub_page_telegram_only_pay(body.user_id)
+    if not CRYPTOBOT_API_TOKEN:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "CryptoBot не настроен")
+    billing_uid, price, duration_str, devices, add_n = await _sub_page_add_devices_quote(body)
+    result = await create_cryptobot_payment(
+        rub_amount=price,
+        description=f"Доп. устройства +{add_n}",
+        user_id=billing_uid,
+        duration=duration_str,
+        white=False,
+        is_gift=False,
+        device=devices,
+        source=SUB_PAGE_PAYLOAD_SOURCE,
+    )
+    if result.get("status") == "rate_limited":
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            lexicon["payment_too_many_pending"].format(PAYMENT_MAX_PENDING_PER_USER),
+        )
+    if result.get("status") != "pending":
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Не удалось создать счёт CryptoBot")
+    return {
+        "payment_url": result.get("url") or "",
+        "invoice_id": result.get("invoice_id"),
+    }
 
 
 @app.post("/api/v1/sub_page/pay/renew/fk_sbp")
@@ -2037,6 +2219,30 @@ async def sub_page_pay_add_devices_fk_card(
     body: SubPagePayAddDevicesIn, request: Request, _: SubPageAuth
 ):
     return await _sub_page_pay_add_devices(body, request, "card")
+
+
+@app.post("/api/v1/sub_page/pay/renew/stars")
+async def sub_page_pay_renew_stars(body: SubPagePayRenewIn, request: Request, _: SubPageAuth):
+    return await _sub_page_pay_renew_stars(body, request)
+
+
+@app.post("/api/v1/sub_page/pay/renew/cryptobot")
+async def sub_page_pay_renew_cryptobot(body: SubPagePayRenewIn, request: Request, _: SubPageAuth):
+    return await _sub_page_pay_renew_cryptobot(body, request)
+
+
+@app.post("/api/v1/sub_page/pay/add_devices/stars")
+async def sub_page_pay_add_devices_stars(
+    body: SubPagePayAddDevicesIn, request: Request, _: SubPageAuth
+):
+    return await _sub_page_pay_add_devices_stars(body, request)
+
+
+@app.post("/api/v1/sub_page/pay/add_devices/cryptobot")
+async def sub_page_pay_add_devices_cryptobot(
+    body: SubPagePayAddDevicesIn, request: Request, _: SubPageAuth
+):
+    return await _sub_page_pay_add_devices_cryptobot(body, request)
 
 
 @app.get("/api/v1/sub_page/devices")

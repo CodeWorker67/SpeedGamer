@@ -4,8 +4,8 @@
  *
  * API (заголовок X-Sub-Page-Api-Key = SUB_PAGE_API_KEY из .env бота):
  *   GET  /api/v1/sub_page/payment-options?username=&user_id=
- *   POST /api/v1/sub_page/pay/renew/fk_sbp|fk_card     { user_id, username, months: 1|3 }
- *   POST /api/v1/sub_page/pay/add_devices/fk_sbp|fk_card { user_id, username, add_count }
+ *   POST /api/v1/sub_page/pay/renew/fk_sbp|fk_card|stars|cryptobot
+ *   POST /api/v1/sub_page/pay/add_devices/fk_sbp|fk_card|stars|cryptobot
  *
  * Legacy username (*_3, *_10): блоки оплаты и «Добавить устройство» не показываются.
  *
@@ -57,12 +57,17 @@ import {
     SubPageDevicesInfo
 } from '@shared/utils/sub-page-bot-api'
 
-type PayMethodId = 'fk_sbp' | 'fk_card'
+type PayMethodId = 'fk_sbp' | 'fk_card' | 'stars' | 'cryptobot'
 
-const PAY_METHODS: ReadonlyArray<{ id: PayMethodId; label: string }> = [
+const PAY_METHODS_ALL: ReadonlyArray<{ id: PayMethodId; label: string }> = [
     { id: 'fk_sbp', label: 'СБП' },
-    { id: 'fk_card', label: 'Карты РФ' }
+    { id: 'fk_card', label: 'Карты РФ' },
+    { id: 'stars', label: 'Telegram Stars' },
+    { id: 'cryptobot', label: 'Telegram Cryptobot' }
 ]
+const PAY_METHODS_SITE = PAY_METHODS_ALL.filter(
+    (m) => m.id === 'fk_sbp' || m.id === 'fk_card'
+)
 
 type RenewOption = {
     months: number
@@ -112,6 +117,8 @@ function renewLabel(opt: RenewOption): string {
 function SubscriptionBillingSection({ isMobile }: { isMobile: boolean }) {
     const { user } = useSubscription()
     const userId = useMemo(() => parseSubPageUserId(user.username), [user.username])
+    const isSiteUser = userId != null && userId <= 0
+    const payMethods = isSiteUser ? PAY_METHODS_SITE : PAY_METHODS_ALL
     const payCfg = useMemo(() => subPageBotApiConfig(), [])
 
     const [options, setOptions] = useState<PaymentOptions | null>(null)
@@ -196,10 +203,8 @@ function SubscriptionBillingSection({ isMobile }: { isMobile: boolean }) {
             setBusyMethod(method)
             setErrorText(null)
             const base = payCfg.apiBase.replace(/\/$/, '')
-            const path =
-                intent.kind === 'renew'
-                    ? `/api/v1/sub_page/pay/renew/${method}`
-                    : `/api/v1/sub_page/pay/add_devices/${method}`
+            const segment = intent.kind === 'renew' ? 'renew' : 'add_devices'
+            const path = `/api/v1/sub_page/pay/${segment}/${method}`
             const body =
                 intent.kind === 'renew'
                     ? { user_id: userId, username: user.username, months: intent.months }
@@ -229,9 +234,10 @@ function SubscriptionBillingSection({ isMobile }: { isMobile: boolean }) {
                     setErrorText(msg)
                     return
                 }
-                const obj = data as { payment_url?: string }
-                if (obj.payment_url) {
-                    window.location.assign(obj.payment_url)
+                const obj = data as { payment_url?: string; bot_url?: string }
+                const redirect = obj.payment_url || obj.bot_url
+                if (redirect) {
+                    window.location.assign(redirect)
                     return
                 }
                 setErrorText('В ответе нет ссылки для перехода')
@@ -389,7 +395,7 @@ function SubscriptionBillingSection({ isMobile }: { isMobile: boolean }) {
                         </Text>
                     ) : null}
                     <SimpleGrid cols={1} spacing="xs">
-                        {PAY_METHODS.map((m) => (
+                        {payMethods.map((m) => (
                             <Button
                                 key={m.id}
                                 loading={busyMethod === m.id}
