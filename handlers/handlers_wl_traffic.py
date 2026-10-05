@@ -4,6 +4,8 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
+from bot import sql
+from config_bd.utils import user_has_active_pro_subscription
 from keyboard import keyboard_wl_traffic_payment_method, keyboard_wl_traffic_tariffs
 from lexicon import lexicon
 from utils.menu_ui import edit_or_send_photo, show_connect_screen
@@ -26,6 +28,11 @@ async def user_profile_legacy(callback: CallbackQuery):
 
 @router.callback_query(F.data.in_({WL_TRAFFIC_BUY_CB, WL_TRAFFIC_BUY_SUB_CB}))
 async def wl_traffic_buy_cb(callback: CallbackQuery):
+    user = await sql.get_user_object_by_user_id(callback.from_user.id)
+    if user is None or not user_has_active_pro_subscription(user):
+        await callback.answer("В начале купите подписку!", show_alert=True)
+        return
+
     back_callback = "buy_vpn_self" if callback.data == WL_TRAFFIC_BUY_SUB_CB else "connect_vpn"
     await callback.answer()
     await edit_or_send_photo(
