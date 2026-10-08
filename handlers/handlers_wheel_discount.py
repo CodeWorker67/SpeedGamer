@@ -192,19 +192,19 @@ async def wheel_discount_pick(callback: CallbackQuery):
     if not ok:
         await callback.answer(lexicon["wheel_discount_activate_fail"], show_alert=True)
         return
-    await callback.answer(lexicon["wheel_discount_applied"].format(pct=pct))
-    hide_back = True
 
+    hide_back = True
     text = await _discount_screen_text(uid, kind, product_key, payment_step=True)
     photo = "buy_traffic" if kind == KIND_TRAFFIC else "buy_subscription"
     if kind == KIND_TRAFFIC:
-        text += "\n\n" + lexicon["wheel_discount_pay_sub"]
         pay_kb = _payment_keyboard(kind, product_key, hide_back=hide_back)
+        text += "\n\n" + lexicon["wheel_discount_pay_sub"]
     elif kind == KIND_GIFT:
+        pay_kb = _payment_keyboard(kind, product_key, hide_back=hide_back)
         text += "\n\n" + lexicon["wheel_discount_pay_gift"]
-        pay_kb = _payment_keyboard(kind, product_key, hide_back=hide_back)
     else:
-        text += "\n\n" + lexicon["wheel_discount_pay_sub"]
         pay_kb = _payment_keyboard(kind, product_key, hide_back=hide_back)
+        text += "\n\n" + lexicon["wheel_discount_pay_sub"]
 
     await edit_or_send_photo(callback, photo, text, pay_kb)
+    await callback.answer(lexicon["wheel_discount_applied"].format(pct=pct))

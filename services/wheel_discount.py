@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from bot import sql
-from lexicon import dct_desc, dct_price, dct_price_friends
+from lexicon import dct_desc, dct_price, dct_price_friends, lexicon
 from logging_config import logger
 from tariff_resolve import tariff_days_for_x3, tariff_rub_and_desc
 from wl_traffic.service import parse_traffic_duration
