@@ -138,7 +138,7 @@ async def main() -> None:
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Bot start polling, web API on port {}.", WEB_API_PORT)
-        bot_task = asyncio.create_task(dp.start_polling(bot))
+        bot_task = asyncio.create_task(dp.start_polling(bot, drop_pending_updates=True))
         api_task = asyncio.create_task(server.serve())
         await asyncio.gather(bot_task, api_task)
     except asyncio.CancelledError:
