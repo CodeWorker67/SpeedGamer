@@ -38,20 +38,20 @@ async def process_payment_stars(callback: CallbackQuery):
         await callback.answer(blocked, show_alert=True)
         return
 
-    try:
-        stars_amount, _ = tariff_rub_and_desc(duration_plain)
-    except KeyError:
-        stars_amount = int(dct_price.get(duration_key, 0))
-    if callback.from_user.id in ADMIN_IDS:
-        stars_amount = 1
-    user_id = str(callback.from_user.id)
+    from payments.wheel_checkout import bot_tariff_checkout_quote
+
+    uid = callback.from_user.id
+    quote = await bot_tariff_checkout_quote(uid, gift=gift_flag, desc_key=duration_key)
+    stars_amount = int(quote.final_stars)
+    suffix = quote.payload_suffix
+    user_id = str(uid)
 
     days_payload = str(tariff_days_for_x3(duration_plain))
     device_n = device_from_tariff_key(duration_plain)
 
     payload = (
         f"user_id:{user_id},duration:{days_payload},white:{white_flag},gift:{gift_flag},"
-        f"method:stars,amount:{stars_amount},device:{device_n}"
+        f"method:stars,amount:{stars_amount},device:{device_n}{suffix}"
     )
 
     prices = [LabeledPrice(label="XTR", amount=stars_amount)]

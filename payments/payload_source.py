@@ -2,3 +2,4 @@
 
 SITE = "site"
 SUBPAGE = "subpage"
+MINIAPP = "miniapp"

@@ -2316,10 +2316,15 @@ async def sub_page_wl_traffic(
     }
 
 
+from wheel_api import router as wheel_router  # noqa: E402
+
+app.include_router(wheel_router)
+
+
 if __name__ == "__main__":
     import uvicorn
     from config import WEB_API_PORT
 
     if not SUB_PAGE_API_KEY and not JWT_SECRET:
-        raise SystemExit("Задайте SUB_PAGE_API_KEY и/или JWT_SECRET в .env")
+        raise SystemExit("Задайте SUB_PAGE_API_KEY и/или JWT_SECRET in .env")
     uvicorn.run("web_api:app", host="0.0.0.0", port=WEB_API_PORT, reload=False)

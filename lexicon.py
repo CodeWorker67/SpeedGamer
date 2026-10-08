@@ -623,7 +623,65 @@ lexicon = {
 Выберите сервер и включите ВПН.
 
 ⏳ Не откладывайте — подключайтесь и пользуйтесь! 🚀
-    '''
+    ''',
+
+    'wheel_attempts_granted': (
+        '🎡 Вам начислено <b>{count}</b> {word} на '
+        '<a href="{wheel_url}">Колесе ВПН ДЛЯ СВОИХ</a>!'
+    ),
+    'wheel_partner_friend_paid': (
+        '🎡 По вашей партнёрской ссылке уже <b>{paid}</b> оплативших друзей!\n'
+        'Вам начислено <b>+{count}</b> {word} на '
+        '<a href="{wheel_url}">Колесе ВПН ДЛЯ СВОИХ</a>!'
+    ),
+    'wheel_vpn_success': (
+        '🎡 <b>Выигрыш колеса фортуны!</b>\n\n'
+        '✅ Подписка успешно {0}!\n'
+        '└ до: {1}\n\n'
+        '📅 Добавлено дней: {2}\n\n'
+        '🔑 Ваш ключ:\n'
+        '<code>{3}</code>'
+    ),
+    'wheel_payment_gift': (
+        '🎡 <b>Выигрыш колеса фортуны!</b>\n\n'
+        '🎁 Подарок: {0} дней подписки ВПН ДЛЯ СВОИХ{1}\n\n'
+        'Переходи по ссылке, чтобы моментально активировать доступ:\n'
+        '⬇️\n\n'
+        f'{BOT_URL}?start=gift_{{2}}\n\n'
+        'Приятного пользования! 🫶'
+    ),
+    'wheel_payment_gift_faq': (
+        '⬆️⬆️⬆️\n'
+        'Выше сообщение для подарка другу (выигрыш колеса).\n'
+        'Перешлите ему ссылку!'
+    ),
+    'wheel_discount_intro': '🎡 <b>Скидка с колеса фортуны</b>',
+    'wheel_discount_warning': (
+        '⚠️ <b>Внимание!</b> При выборе скидки она <b>активируется</b> (количество уменьшится) '
+        'и нужно оплатить выбранный тариф, иначе скидка сгорит.\n'
+        'Перед выбором убедитесь, что выбрали услугу, которую хотели купить.'
+    ),
+    'wheel_discount_pick': 'Выберите скидку для <b>этой</b> покупки:',
+    'wheel_discount_tariff_sub_inline': (
+        '📅 Срок подписки: {duration}\n'
+        '💰 Цена: {price} ₽'
+    ),
+    'wheel_discount_tariff_gift_inline': (
+        '🎁 Подарок: {duration}\n'
+        '💰 Цена: {price} ₽'
+    ),
+    'wheel_discount_tariff_traffic': (
+        '📶 Пакет Антиглушилка: {gb} GB\n'
+        '💰 Цена: {price} ₽'
+    ),
+    'wheel_discount_applied': 'Скидка −{pct}% активирована',
+    'wheel_discount_activate_fail': 'Не удалось активировать скидку',
+    'wheel_discount_none_ok': 'Оплата без скидки',
+    'wheel_discount_empty': 'Нет доступных скидок этого номинала',
+    'wheel_discount_pay_sub': 'Выберите способ оплаты:',
+    'wheel_discount_pay_gift': 'Выберите способ оплаты подарка:',
+    'wheel_discount_total': 'Итого: <b>{final_rub} ₽</b> (−{pct}%)',
+    'wheel_discount_total_no_disc': 'Итого: <b>{final_rub} ₽</b>',
 }
 
 lexicon = emojify_value(lexicon)
@@ -803,6 +861,26 @@ def gift_duration_caption() -> str:
         '<b>Выберите срок подарка:</b>\n\n'
         'В подарочной подписке <b>5 устройств</b>.'
     )
+
+
+def _wheel_discount_payments_word(count: int) -> str:
+    n = abs(int(count))
+    if n % 100 in (11, 12, 13, 14):
+        return "оплат"
+    rem = n % 10
+    if rem == 1:
+        return "оплата"
+    if rem in (2, 3, 4):
+        return "оплаты"
+    return "оплат"
+
+
+def format_wheel_discount_balances(d10: int, d30: int, d50: int) -> str:
+    lines = ["Доступны скидки:"]
+    for pct, count in ((10, d10), (30, d30), (50, d50)):
+        if count > 0:
+            lines.append(f"−{pct}% — {count} {_wheel_discount_payments_word(count)}")
+    return "\n".join(lines) if len(lines) > 1 else "Доступны скидки с колеса фортуны."
 
 
 def payment_tariff_summary_pro(desc_key: str) -> str:

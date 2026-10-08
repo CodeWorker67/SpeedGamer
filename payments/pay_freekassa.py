@@ -354,10 +354,14 @@ async def _handle_fk_payment_callback(callback: CallbackQuery, ui_kind: UiKind) 
         return
     await callback.answer()
     desc_key = duration
-    rub_amount, des_text = tariff_rub_and_desc(desc_key)
-    if callback.from_user.id in ADMIN_IDS:
-        rub_amount = 1
-    user_id = str(callback.from_user.id)
+    from payments.wheel_checkout import bot_tariff_checkout_quote
+
+    uid = callback.from_user.id
+    quote = await bot_tariff_checkout_quote(uid, gift=gift_flag, desc_key=desc_key)
+    rub_amount = int(quote.final_rub)
+    suffix = quote.payload_suffix
+    _, des_text = tariff_rub_and_desc(desc_key)
+    user_id = str(uid)
     white_flag = False
     if "white" in duration:
         duration_plain = duration.replace("white_", "", 1)
@@ -383,6 +387,7 @@ async def _handle_fk_payment_callback(callback: CallbackQuery, ui_kind: UiKind) 
             white=white_flag,
             device=device_n,
             ui_kind=ui_kind,
+            payload_suffix=suffix,
         )
     else:
         payment_info = await pay(
@@ -393,6 +398,7 @@ async def _handle_fk_payment_callback(callback: CallbackQuery, ui_kind: UiKind) 
             white=white_flag,
             device=device_n,
             ui_kind=ui_kind,
+            payload_suffix=suffix,
         )
 
     btn = "⚡ Оплатить СБП" if ui_kind == "sbp" else "💳 Оплатить картой РФ"

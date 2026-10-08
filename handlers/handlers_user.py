@@ -67,6 +67,8 @@ from tariff_resolve import (
     bot_tariff_purchase_blocked_reason,
 )
 from config_bd.utils import pro_subscription_end_active
+from handlers.handlers_wheel_discount import show_tariff_with_optional_discount
+from services.wheel_discount import KIND_GIFT, KIND_SUB
 from handlers.user_profile_sync import (
     SyncTelegramProfileMiddleware,
     tg_profile_fields,
@@ -425,15 +427,15 @@ async def process_payment_method(callback: CallbackQuery):
     if m:
         months, devices = int(m.group(1)), int(m.group(2))
         price = subscription_price_rub(months, devices)
-        text = self_payment_method_caption(months, devices, price)
+        intro = self_payment_method_caption(months, devices, price)
     else:
-        text = payment_tariff_summary_pro(dk)
-        text += '\n\nВыберите метод оплаты:'
-    await edit_or_send_photo(
+        intro = payment_tariff_summary_pro(dk)
+    await show_tariff_with_optional_discount(
         callback,
-        "buy_subscription",
-        text,
-        keyboard_payment_method(tariff),
+        kind=KIND_SUB,
+        product_key=dk,
+        intro_text=intro,
+        photo="buy_subscription",
     )
 
 
@@ -457,13 +459,14 @@ async def self_devices_adjust(callback: CallbackQuery):
     action, months_s, devices_s = match.group(1), match.group(2), match.group(3)
     months, devices = int(months_s), int(devices_s)
     if action == 'go_pay':
-        tariff = f'r_m{months}_d{devices}'
+        product_key = f'm{months}_d{devices}'
         price = subscription_price_rub(months, devices)
-        await edit_or_send_photo(
+        await show_tariff_with_optional_discount(
             callback,
-            "buy_subscription",
-            self_payment_method_caption(months, devices, price),
-            keyboard_payment_method(tariff),
+            kind=KIND_SUB,
+            product_key=product_key,
+            intro_text=self_payment_method_caption(months, devices, price),
+            photo="buy_subscription",
         )
         await callback.answer()
         return
@@ -1033,15 +1036,16 @@ async def process_gift_payment_method(callback: CallbackQuery):
     if m:
         months = int(m.group(1))
         price = subscription_price_rub(months, 5)
-        text = self_payment_method_caption(months, 5, price)
+        intro = self_payment_method_caption(months, 5, price)
     else:
-        text = payment_tariff_summary_pro(dk)
-    text += '\n\nВыберите способ оплаты <b>подарочной подписки</b>:'
-    await edit_or_send_photo(
+        intro = payment_tariff_summary_pro(dk)
+    intro += '\n\n<b>Подарочная подписка</b>'
+    await show_tariff_with_optional_discount(
         callback,
-        "buy_subscription",
-        text,
-        keyboard_payment_method(tariff),
+        kind=KIND_GIFT,
+        product_key=dk,
+        intro_text=intro,
+        photo="buy_subscription",
     )
 
 

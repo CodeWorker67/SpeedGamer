@@ -326,7 +326,10 @@ async def _merge_user_paid_subscription_flags(session, user_id: int) -> Tuple[bo
     return has_pro, has_white
 
 
-class AsyncSQL:
+from config_bd.wheel_sql_mixin import WheelSqlMixin
+
+
+class AsyncSQL(WheelSqlMixin):
     def __init__(self):
         self.session_factory = AsyncSessionLocal
 

@@ -1,9 +1,13 @@
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
 
 from bot import x3, sql, bot
 
 from config import PARTNER_PROCENT, LEAD_TRACKER_STAR_RUB_PER_STAR, CHECKER_ID
+from services.wheel import grant_purchase_wheel_attempts, sync_partner_wheel_attempts
+from services.wheel_notify import notify_partner_wheel_attempts
+from services.wheel_discount import commit_payload_discount, validate_payload_discount
 from lead_tracker import post_payment_success
 from keyboard import create_kb, keyboard_sub_after_buy, BTN_BACK
 from lexicon import lexicon
@@ -197,6 +201,10 @@ async def process_confirmed_payment(payload) -> bool:
         if not is_main_variable_device_slots(device_slots) and device_slots not in (3, 5, 10):
             device_slots = 5
 
+        if not await validate_payload_discount(user_id, payload_parts, payload=payload):
+            logger.error("Wheel discount: отклонён платёж uid={} (валидация)", user_id)
+            return False
+
         logger.info(
             f"Обработка подтвержденного платежа для user={user_id}, duration={duration}, white={white_flag}, "
             f"gift={is_gift}, method={method}, amount={amount}, device={device_slots}")
@@ -249,10 +257,28 @@ async def process_confirmed_payment(payload) -> bool:
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки сообщения о подарке: {e}")
 
+            wheel_extra = await grant_purchase_wheel_attempts(user_id, duration)
+            if not await commit_payload_discount(user_id, payload, payload_parts):
+                logger.error("Wheel discount: не списана скидка после подарка uid={}", user_id)
+                return False
+
             return True
 
         else:
             # Обработка обычного платежа (не подарок)
+            payer_had_paid_before = False
+            payer_partner_id: Optional[int] = None
+            try:
+                user_data_pre = await sql.get_user(user_id)
+                if user_data_pre and len(user_data_pre) > 8:
+                    payer_had_paid_before = bool(user_data_pre[8])
+                if user_data_pre and len(user_data_pre) > 27 and user_data_pre[27]:
+                    try:
+                        payer_partner_id = int(str(user_data_pre[27]).strip())
+                    except (TypeError, ValueError):
+                        payer_partner_id = None
+            except Exception:
+                pass
             user_id_str = panel_username(user_id, white=white_flag, device_slots=device_slots)
             hwid_lim = None if white_flag else device_slots
 
@@ -386,6 +412,18 @@ async def process_confirmed_payment(payload) -> bool:
             await post_payment_success(user_id, method, amount)
             await _credit_partner_commission(user_id, method, amount)
 
+            await grant_purchase_wheel_attempts(user_id, duration)
+            if (
+                not payer_had_paid_before
+                and payer_partner_id is not None
+                and payer_partner_id > 0
+                and payer_partner_id != user_id
+            ):
+                partner_delta = await sync_partner_wheel_attempts(payer_partner_id)
+                if partner_delta > 0:
+                    paid = await sql.select_partner_paid_count(payer_partner_id)
+                    await notify_partner_wheel_attempts(payer_partner_id, partner_delta, paid)
+
             if not white_flag:
                 await credit_wl_subscription_bonus(sql, user_id, duration)
                 trafic_wl, limit_wl = await sql.get_wl_limits(user_id)
@@ -410,6 +448,10 @@ async def process_confirmed_payment(payload) -> bool:
 
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки уведомления: {e}")
+
+            if not await commit_payload_discount(user_id, payload, payload_parts):
+                logger.error("Wheel discount: не списана скидка после подписки uid={}", user_id)
+                return False
 
             return True
 

@@ -672,7 +672,33 @@ def keyboard_payment_method_trial(tarif):
     )
 
 
-def keyboard_payment_method(tarif):
+def keyboard_wheel_discount(kind: str, product_key: str, counts) -> InlineKeyboardMarkup:
+    rows = []
+    for pct, n in ((10, counts.discount_10), (30, counts.discount_30), (50, counts.discount_50)):
+        if n > 0:
+            rows.append([
+                emoji_button(
+                    text=f"🎡 −{pct}% (осталось {n})",
+                    callback_data=f"wd_p:{kind}:{product_key}:{pct}",
+                )
+            ])
+    rows.append([
+        emoji_button(
+            text="Без скидки",
+            callback_data=f"wd_p:{kind}:{product_key}:0",
+        )
+    ])
+    if kind == "traffic":
+        back_cb = "wl_traffic_buy"
+    elif kind == "gift":
+        back_cb = "buy_gift"
+    else:
+        back_cb = "buy_vpn_self"
+    rows.append([emoji_button(text=BTN_BACK, callback_data=back_cb)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def keyboard_payment_method(tarif, *, hide_back: bool = False):
     gift = str(tarif).startswith("gift_")
     pay_prefix = "fk" if gift else "wata"
     rows = [
@@ -700,8 +726,9 @@ def keyboard_payment_method(tarif):
                 callback_data=f"crypto_{tarif}",
             )
         ],
-        [emoji_button(text=BTN_BACK, callback_data="back_to_buy_menu")],
     ]
+    if not hide_back:
+        rows.append([emoji_button(text=BTN_BACK, callback_data="back_to_buy_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1134,8 +1161,13 @@ def keyboard_wl_traffic_tariffs(*, back_callback: str = "back_to_main") -> Inlin
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def keyboard_wl_traffic_payment_method(mb: str, *, back_callback: str = WL_TRAFFIC_BUY_CB) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def keyboard_wl_traffic_payment_method(
+    mb: str,
+    *,
+    back_callback: str = WL_TRAFFIC_BUY_CB,
+    hide_back: bool = False,
+) -> InlineKeyboardMarkup:
+    rows = [
         [
             emoji_button(
                 text="⚡ СБП",
@@ -1160,5 +1192,7 @@ def keyboard_wl_traffic_payment_method(mb: str, *, back_callback: str = WL_TRAFF
                 callback_data=f"wl_traffic_crypto_{mb}",
             )
         ],
-        [emoji_button(text=BTN_BACK, callback_data=back_callback)],
-    ])
+    ]
+    if not hide_back:
+        rows.append([emoji_button(text=BTN_BACK, callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

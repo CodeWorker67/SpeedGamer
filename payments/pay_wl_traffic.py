@@ -52,7 +52,16 @@ async def _pay_fk(callback: CallbackQuery, ui_kind: str) -> None:
         )
         return
 
-    price = _traffic_price(gb, callback.from_user.id)
+    from payments.wheel_checkout import apply_admin_platega_test_price
+    from services.wheel_discount import KIND_TRAFFIC, get_checkout_quote
+
+    uid = int(user_id)
+    quote = apply_admin_platega_test_price(
+        uid,
+        await get_checkout_quote(uid, kind=KIND_TRAFFIC, product_key=gb),
+    )
+    price = int(quote.final_rub)
+    suffix = quote.payload_suffix
     duration = _traffic_duration(gb)
 
     payment_info = await pay(
@@ -63,6 +72,7 @@ async def _pay_fk(callback: CallbackQuery, ui_kind: str) -> None:
         white=False,
         device=5,
         ui_kind=ui_kind,
+        payload_suffix=suffix,
     )
 
     btn = "⚡ Оплатить СБП" if ui_kind == "sbp" else "💳 Оплатить картой РФ"
@@ -93,11 +103,20 @@ async def wl_traffic_pay_stars(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    stars_amount = _traffic_price(gb, callback.from_user.id)
+    from payments.wheel_checkout import apply_admin_platega_test_price
+    from services.wheel_discount import KIND_TRAFFIC, get_checkout_quote
+
+    uid = callback.from_user.id
+    quote = apply_admin_platega_test_price(
+        uid,
+        await get_checkout_quote(uid, kind=KIND_TRAFFIC, product_key=gb),
+    )
+    stars_amount = int(quote.final_stars)
+    suffix = quote.payload_suffix
     duration = _traffic_duration(gb)
     payload = (
         f"user_id:{user_id},duration:{duration},white:False,gift:False,"
-        f"method:stars,amount:{stars_amount},device:5"
+        f"method:stars,amount:{stars_amount},device:5{suffix}"
     )
 
     await bot.send_invoice(
@@ -127,7 +146,15 @@ async def wl_traffic_pay_crypto(callback: CallbackQuery):
         )
         return
 
-    rub_amount = _traffic_price(gb, user_id)
+    from payments.wheel_checkout import apply_admin_platega_test_price
+    from services.wheel_discount import KIND_TRAFFIC, get_checkout_quote
+
+    quote = apply_admin_platega_test_price(
+        user_id,
+        await get_checkout_quote(user_id, kind=KIND_TRAFFIC, product_key=gb),
+    )
+    rub_amount = int(quote.final_rub)
+    suffix = quote.payload_suffix
     duration = _traffic_duration(gb)
 
     result = await create_cryptobot_payment(
@@ -138,6 +165,7 @@ async def wl_traffic_pay_crypto(callback: CallbackQuery):
         white=False,
         is_gift=False,
         device=5,
+        payload_suffix=suffix,
     )
 
     if result["status"] == "pending":

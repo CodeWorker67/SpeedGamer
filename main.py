@@ -21,7 +21,7 @@ from sheduler.check_online import check_online_daily
 from sheduler.check_fk import check_fk
 from sheduler.check_wata_sbp import check_wata_sbp
 from sheduler.check_wata_card import check_wata_card
-from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_add_devices, handlers_discount_push, handlers_wl_traffic
+from handlers import handlers_user, handlers_statistic, handlers_admin, handlers_broadcast, handlers_export, handlers_import, handlers_devices, handlers_add_devices, handlers_discount_push, handlers_wl_traffic, handlers_wheel, handlers_wheel_discount
 # from handlers import handlers_contest_funnel
 from sheduler.time_mes import send_message_cron
 from logging_config import logger
@@ -30,6 +30,7 @@ from sheduler.backup_db import send_db_backup_cron
 from sheduler.check_wl_traffic import check_wl_traffic_cron
 from sheduler.accumulate_wl_traffic import accumulate_wl_traffic_cron
 from sheduler.credit_forever_wl_monthly import credit_forever_wl_monthly_cron
+from sheduler.wheel_fake_recent_win import wheel_fake_recent_win_job
 from wl_traffic.constants import WL_ACCUMULATE_HOUR, WL_ACCUMULATE_MINUTE
 from utils.menu_photos import init_menu_photos
 from web_api import app as web_app
@@ -64,6 +65,8 @@ async def main() -> None:
     dp.include_router(handlers_import.router)
     dp.include_router(handlers_devices.router)
     dp.include_router(handlers_add_devices.router)
+    dp.include_router(handlers_wheel.router)
+    dp.include_router(handlers_wheel_discount.router)
     dp.include_router(handlers_user.router)
     dp.include_router(handlers_wl_traffic.router)
     dp.include_router(handlers_export.router)
@@ -106,6 +109,13 @@ async def main() -> None:
         args=[bot],
         id='wl_forever_monthly',
         misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        wheel_fake_recent_win_job,
+        trigger='interval',
+        hours=6,
+        id='wheel_fake_recent_win',
+        misfire_grace_time=600,
     )
     scheduler.add_job(check_online_daily, 'cron', hour=2, minute=55, id='daily_online_stats', misfire_grace_time=60)
     scheduler.add_job(

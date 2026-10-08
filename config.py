@@ -19,6 +19,8 @@ CRYPTOBOT_API_TOKEN: Optional[str] = os.environ.get("CRYPTOBOT_API_TOKEN")
 PANEL_URL: Optional[str] = os.environ.get("PANEL_URL")
 PANEL_API_TOKEN: Optional[str] = os.environ.get("PANEL_API_TOKEN")
 BOT_URL: Optional[str] = os.environ.get("BOT_URL")
+# Telegram Mini App «колесо фортуны» (HTTPS, для тестов — ngrok на Vite svoi_wheel).
+WHEEL_MINIAPP_URL: str = (os.environ.get("WHEEL_MINIAPP_URL") or "").strip().rstrip("/")
 CHANEL_URL: Optional[str] = os.environ.get("CHANEL_URL")
 SUPPORT_URL: Optional[str] = os.environ.get("SUPPORT_URL")
 DOCUMENT_URL_1: Optional[str] = os.environ.get("DOCUMENT_URL_1")

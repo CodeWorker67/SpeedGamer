@@ -163,10 +163,13 @@ async def process_payment_crypto(callback: CallbackQuery):
         return
     await callback.answer()
 
-    rub_amount, des_text = tariff_rub_and_desc(duration_key)
+    from payments.wheel_checkout import bot_tariff_checkout_quote
 
-    if callback.from_user.id in ADMIN_IDS:
-        rub_amount = 1
+    uid = callback.from_user.id
+    quote = await bot_tariff_checkout_quote(uid, gift=gift_flag, desc_key=duration_key)
+    rub_amount = int(quote.final_rub)
+    suffix = quote.payload_suffix
+    _, des_text = tariff_rub_and_desc(duration_key)
 
     days_payload = str(tariff_days_for_x3(duration_plain))
     device_n = device_from_tariff_key(duration_plain)
@@ -179,11 +182,12 @@ async def process_payment_crypto(callback: CallbackQuery):
     result = await create_cryptobot_payment(
         rub_amount=rub_amount,
         description=description,
-        user_id=user_id,
+        user_id=uid,
         duration=days_payload,
         white=white_flag,
         is_gift=gift_flag,
         device=device_n,
+        payload_suffix=suffix,
     )
 
     if result['status'] == 'pending':
