@@ -8,12 +8,10 @@ from lexicon import lexicon
 
 
 def wheel_miniapp_tme_url() -> str:
-    bot_url = (BOT_URL or "").lower()
-    if "fastmobilevpnbot" in bot_url:
-        return "https://t.me/fastmobilevpnbot/wheel"
-    if "speedgamer" in bot_url or "svoi" in bot_url:
-        return f"{BOT_URL.rstrip('/')}/wheel" if BOT_URL else "https://t.me/fastmobilevpnbot/wheel"
-    return "https://t.me/fastmobilevpnbot/wheel"
+    base = (BOT_URL or "").strip().rstrip("/")
+    if base:
+        return f"{base}/wheel"
+    return "https://t.me/fastgamerbot/wheel"
 
 
 def wheel_attempts_word(count: int) -> str:

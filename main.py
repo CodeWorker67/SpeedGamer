@@ -34,6 +34,7 @@ from sheduler.wheel_fake_recent_win import wheel_fake_recent_win_job
 from wl_traffic.constants import WL_ACCUMULATE_HOUR, WL_ACCUMULATE_MINUTE
 from utils.menu_photos import init_menu_photos
 from web_api import app as web_app
+from bot_runtime import mark_polling_started
 
 
 async def set_commands(bot: Bot):
@@ -137,7 +138,13 @@ async def main() -> None:
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Bot start polling, web API on port {}.", WEB_API_PORT)
+        await asyncio.sleep(0.3)
+        await bot.delete_webhook(drop_pending_updates=True)
+        mark_polling_started()
+        logger.info(
+            "Bot start polling (pending updates dropped), web API on port {}.",
+            WEB_API_PORT,
+        )
         bot_task = asyncio.create_task(dp.start_polling(bot, drop_pending_updates=True))
         api_task = asyncio.create_task(server.serve())
         await asyncio.gather(bot_task, api_task)

@@ -67,6 +67,7 @@ from tariff_resolve import (
     bot_tariff_purchase_blocked_reason,
 )
 from config_bd.utils import pro_subscription_end_active
+from bot_runtime import start_message_is_backlog
 from handlers.handlers_wheel_discount import show_tariff_with_optional_discount
 from services.wheel_discount import KIND_GIFT, KIND_SUB
 from handlers.user_profile_sync import (
@@ -107,6 +108,8 @@ _PROMO_120_TARIFF_RE = re.compile(r'^r_120_d5$')
 # Этот хэндлер срабатывает на команду /start
 @router.message(Command(commands="start"))
 async def process_start_command(message: Message, command: Command):
+    if start_message_is_backlog(message):
+        return
 
     user_data = await sql.get_user(message.from_user.id)
     had_row_before = user_data is not None
